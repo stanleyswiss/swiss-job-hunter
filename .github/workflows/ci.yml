@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Python backend ───────────────────────────────────────────────────────────
+  test-backend:
+    name: Backend Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Create minimal .env for tests
+        run: |
+          cat > .env << 'ENVEOF'
+          ANTHROPIC_API_KEY=sk-ant-test-key
+          DATABASE_URL=sqlite:///./data/test.db
+          DEFAULT_LOCATION=Zürich
+          DEFAULT_LANGUAGE=en
+          SEMANTIC_SIMILARITY_THRESHOLD=0.92
+          EMBEDDING_MODEL=all-MiniLM-L6-v2
+          SCRAPER_DELAY_MIN=0.1
+          SCRAPER_DELAY_MAX=0.2
+          SCRAPER_MAX_PAGES=1
+          PLAYWRIGHT_HEADLESS=true
+          SCHEDULE_ENABLED=false
+          CV_PDF_PATH=./data/cv.pdf
+          CV_TEXT_PATH=./data/cv.txt
+          ENVEOF
+
+      - name: Create data directory
+        run: mkdir -p data
+
+      - name: Lint with ruff
+        run: ruff check . --ignore E501,F401 || true
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short --ignore=tests/test_scrapers.py
+        # Skip scraper tests in CI (require network)
+
+      - name: Test DB init
+        run: |
+          python -c "
+          from db.session import init_db
+          init_db()
+          print('DB init OK')
+          "
+
+      - name: Test settings load
+        run: |
+          python -c "
+          from config.settings import settings
+          print('Settings OK:', settings.default_location)
+          "
+
+      - name: Test scorer (no API)
+        run: |
+          python -c "
+          from analyzer.scorer import fast_score
+          result = fast_score(
+            'PyTorch BEV perception sensor fusion autonomous driving radar camera',
+            'Requirements: PyTorch, computer vision, sensor fusion, BEV'
+          )
+          print(f'Score: {result.score:.0%}, matched: {result.matched_skills}')
+          assert result.score > 0, 'Score should be > 0'
+          print('Scorer OK')
+          "
+
+  # ── Frontend ─────────────────────────────────────────────────────────────────
+  test-frontend:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ui
+        run: npm ci --prefer-offline || npm install
+
+      - name: Build
+        working-directory: ui
+        run: npm run build
+
+  # ── Security & quality ───────────────────────────────────────────────────────
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check for secrets in code
+        run: |
+          # Fail if any real API keys are accidentally committed
+          if grep -r "sk-ant-api" --include="*.py" --include="*.js" --include="*.json" .; then
+            echo "ERROR: Real Anthropic API key found in code!"
+            exit 1
+          fi
+          if grep -r "sk-ant-api" .env 2>/dev/null; then
+            echo "ERROR: .env file should not be committed"
+            exit 1
+          fi
+          echo "No secrets found in tracked files"
+
+      - name: Verify .gitignore covers sensitive files
+        run: |
+          python -c "
+          gitignore = open('.gitignore').read()
+          required = ['.env', 'data/', '*.db']
+          for r in required:
+            assert r in gitignore, f'{r} not in .gitignore!'
+          print('gitignore OK')
+          "

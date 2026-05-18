@@ -1,0 +1,55 @@
+name: Scraper Health Check
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Every Monday 06:00 UTC
+  workflow_dispatch:       # Manual trigger
+
+jobs:
+  health-check:
+    name: Check Job Board Availability
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install httpx beautifulsoup4 lxml
+
+      - name: Check job boards
+        run: |
+          python -c "
+          import httpx, sys
+
+          boards = {
+              'jobs.ch API':      'https://www.jobs.ch/api/v1/public/search/?query=engineer&location=Zurich&page=1',
+              'jobup.ch API':     'https://www.jobup.ch/api/v1/search/jobs/?term=engineer&location=Geneva',
+              'SwissDevJobs':     'https://swissdevjobs.ch/jobs',
+              'Züri.Jobs':        'https://www.züri.jobs/jobs',
+          }
+
+          failed = []
+          with httpx.Client(timeout=15, follow_redirects=True,
+                            headers={'User-Agent': 'Mozilla/5.0'}) as client:
+              for name, url in boards.items():
+                  try:
+                      r = client.get(url)
+                      status = '✓' if r.status_code < 400 else '✗'
+                      print(f'{status} {name}: {r.status_code}')
+                      if r.status_code >= 400:
+                          failed.append(name)
+                  except Exception as e:
+                      print(f'✗ {name}: {e}')
+                      failed.append(name)
+
+          if failed:
+              print(f'\nFailed: {failed}')
+              sys.exit(1)
+          print('\nAll boards reachable')
+          "

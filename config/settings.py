@@ -1,0 +1,81 @@
+"""
+Central configuration — loaded from .env / environment variables.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Literal
+
+from pydantic import Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    # ── Anthropic ──────────────────────────────────────────────────────────────
+    anthropic_api_key: str = Field(default="", description="Anthropic API key")
+    anthropic_model: str = "claude-sonnet-4-20250514"
+
+    # ── DeepSeek ───────────────────────────────────────────────────────────────
+    deepseek_api_key: str = Field(default="", description="DeepSeek API key")
+    deepseek_model: str = "deepseek-chat"
+    deepseek_base_url: str = "https://api.deepseek.com"
+
+    # ── LLM routing ────────────────────────────────────────────────────────────
+    # "auto"      → round-robin between all configured providers
+    # "anthropic" → always use Anthropic
+    # "deepseek"  → always use DeepSeek
+    llm_provider: Literal["auto", "anthropic", "deepseek"] = "auto"
+
+    # ── Database ───────────────────────────────────────────────────────────────
+    database_url: str = "sqlite:///./data/jobs.db"
+
+    # ── Search defaults ────────────────────────────────────────────────────────
+    default_location: str = "Zürich"
+    default_language: Literal["en", "de", "fr"] = "en"
+    search_radius_km: int = 30
+
+    # ── Dedup ──────────────────────────────────────────────────────────────────
+    semantic_similarity_threshold: float = 0.92
+    embedding_model: str = "all-MiniLM-L6-v2"
+
+    # ── Scraper ────────────────────────────────────────────────────────────────
+    scraper_delay_min: float = 1.5
+    scraper_delay_max: float = 4.0
+    scraper_max_pages: int = 10
+    playwright_headless: bool = True
+
+    # ── Email ──────────────────────────────────────────────────────────────────
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    apply_from_email: str = ""
+    apply_from_name: str = ""
+
+    # ── CV ─────────────────────────────────────────────────────────────────────
+    cv_pdf_path: Path = Path("./data/cv.pdf")
+    cv_text_path: Path = Path("./data/cv.txt")
+
+    # ── Scheduler ──────────────────────────────────────────────────────────────
+    schedule_enabled: bool = False
+    schedule_cron: str = "0 8 * * 1-5"
+
+    @model_validator(mode="after")
+    def check_at_least_one_llm_key(self) -> "Settings":
+        if not self.anthropic_api_key and not self.deepseek_api_key:
+            raise ValueError(
+                "At least one LLM API key is required: "
+                "set ANTHROPIC_API_KEY and/or DEEPSEEK_API_KEY in .env"
+            )
+        return self
+
+
+# Singleton — import this everywhere
+settings = Settings()  # type: ignore[call-arg]
