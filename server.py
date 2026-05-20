@@ -288,6 +288,7 @@ async def run_enrich(req: EnrichRequest):
             "swissdevjobs.ch": "scrapers.swissdevjobs.SwissDevJobsScraper",
             "züri.jobs": "scrapers.zuri_jobs.ZuriJobsScraper",
             "efinancialcareers.ch": "scrapers.efinancialcareers.EFinancialCareersScraper",
+            "jobup.ch": "scrapers.jobup_ch.JobupChScraper",
             "linkedin.com": "scrapers.linkedin_rss.LinkedInRssScraper",
             "michael-page.ch": "scrapers.michael_page.MichaelPageScraper",
         }
@@ -339,6 +340,8 @@ class AnalyzeRequest(BaseModel):
     limit: int = 100
     llm: bool = False
     min_score: float = 0.3
+    skip_scored: bool = True
+    archive_below: float = 0.1  # auto-archive jobs scoring below this (LLM mode only)
 
 
 @app.post("/run/analyze")
@@ -355,12 +358,13 @@ async def run_analyze(req: AnalyzeRequest):
             return
 
         with get_session() as session:
-            jobs = (
+            query = (
                 session.query(Job)
                 .filter(Job.status.in_([JobStatus.NEW, JobStatus.ANALYZED, JobStatus.SHORTLISTED, JobStatus.VIEWED]))
-                .limit(req.limit)
-                .all()
             )
+            if req.skip_scored:
+                query = query.filter(Job.match_score.is_(None))
+            jobs = query.order_by(Job.scraped_at.desc()).limit(req.limit).all()
             job_data = [(j.id, j.title, j.description) for j in jobs]
 
         # LLM scoring is more conservative — use lower threshold
@@ -380,16 +384,21 @@ async def run_analyze(req: AnalyzeRequest):
                     if job:
                         job.match_score = result.score
                         job.match_explanation = result.explanation
-                        job.status = (
-                            JobStatus.SHORTLISTED
-                            if result.score >= threshold
-                            else JobStatus.ANALYZED
-                        )
                         if result.score >= threshold:
+                            job.status = JobStatus.SHORTLISTED
                             shortlisted += 1
+                        elif req.llm and result.score < req.archive_below:
+                            job.status = JobStatus.ARCHIVED
+                        else:
+                            job.status = JobStatus.ANALYZED
 
                 score_pct = f"{result.score:.0%}"
-                icon = "⭐" if result.score >= req.min_score else "·"
+                if result.score >= req.min_score:
+                    icon = "⭐"
+                elif req.llm and result.score < req.archive_below:
+                    icon = "✗"
+                else:
+                    icon = "·"
                 yield f"{icon} #{job_id} {score_pct} — {title[:45]}"
 
             except Exception as e:
@@ -397,6 +406,191 @@ async def run_analyze(req: AnalyzeRequest):
 
         yield f"✓ Done — {shortlisted}/{len(job_data)} shortlisted"
     return await sse(gen())
+
+
+class PurgeRequest(BaseModel):
+    max_score: float = 0.1
+    dry_run: bool = True
+
+
+@app.post("/run/purge-archived")
+async def run_purge_archived(req: PurgeRequest):
+    async def gen():
+        from db.models import Job, JobStatus, RawJob, Application, JobEvent
+        from db.session import get_session
+
+        # Include NEW/ANALYZED/ARCHIVED — all statuses the user hasn't manually acted on
+        _purgeable = [JobStatus.NEW, JobStatus.ANALYZED, JobStatus.ARCHIVED]
+
+        with get_session() as session:
+            jobs = (
+                session.query(Job)
+                .filter(
+                    Job.status.in_(_purgeable),
+                    Job.match_score.isnot(None),
+                    Job.match_score <= req.max_score,
+                )
+                .order_by(Job.match_score.asc())
+                .all()
+            )
+            job_data = [(j.id, j.title, j.match_score, j.status.value) for j in jobs]
+
+        mode = "DRY RUN" if req.dry_run else "DELETE"
+        yield f"[{mode}] {len(job_data)} jobs (new/analyzed/archived) with score ≤ {req.max_score:.0%}"
+
+        deleted = 0
+        for job_id, title, score, status in job_data:
+            if req.dry_run:
+                yield f"· #{job_id} {score:.0%} [{status}] — {title[:50]}"
+                continue
+            try:
+                with get_session() as session:
+                    session.query(JobEvent).filter(JobEvent.job_id == job_id).delete()
+                    session.query(Application).filter(Application.job_id == job_id).delete()
+                    session.query(RawJob).filter(RawJob.canonical_id == job_id).delete()
+                    job = session.get(Job, job_id)
+                    if job:
+                        session.delete(job)
+                deleted += 1
+                yield f"✗ #{job_id} {score:.0%} [{status}] — {title[:50]}"
+            except Exception as e:
+                yield f"! #{job_id} error: {e}"
+
+        if req.dry_run:
+            yield "— preview only, nothing deleted —"
+        else:
+            yield f"✓ Deleted {deleted}/{len(job_data)} jobs"
+    return await sse(gen())
+
+
+_COMPANY_PROMPT = """\
+You are a research assistant helping a job seeker evaluate companies in Switzerland.
+Given a company name, provide a concise 3–5 sentence overview covering:
+- Industry and core business
+- Company size and Swiss/global presence
+- Reputation, work culture, or tech stack (if known)
+If the company is obscure or you are not confident about details, say so honestly — do not fabricate facts.
+Reply in English. No bullet points, plain prose only."""
+
+
+def _normalize_company(name: str) -> str:
+    return name.strip()
+
+
+async def _fetch_company_summary(name: str) -> str:
+    from llm.router import call_llm
+    text, _ = await call_llm(
+        system=_COMPANY_PROMPT,
+        user=f"Company: {name}",
+        max_tokens=300,
+    )
+    return text
+
+
+@app.get("/companies/{name}")
+async def get_company(name: str):
+    from db.session import get_session, init_db
+    from db.models import CompanyInfo
+    init_db()
+    with get_session() as session:
+        row = session.query(CompanyInfo).filter(CompanyInfo.name == _normalize_company(name)).first()
+        if row:
+            return {"name": row.name, "summary": row.summary, "fetched_at": row.fetched_at.isoformat()}
+    return {"name": name, "summary": None}
+
+
+@app.post("/companies/lookup")
+async def lookup_company(body: dict):
+    from db.session import get_session, init_db
+    from db.models import CompanyInfo
+    init_db()
+    name = _normalize_company(body.get("name", ""))
+    if not name:
+        raise HTTPException(400, "name required")
+
+    with get_session() as session:
+        row = session.query(CompanyInfo).filter(CompanyInfo.name == name).first()
+        if row and row.summary:
+            return {"name": row.name, "summary": row.summary, "cached": True}
+
+    summary = await _fetch_company_summary(name)
+
+    with get_session() as session:
+        row = session.query(CompanyInfo).filter(CompanyInfo.name == name).first()
+        if row:
+            row.summary = summary
+            row.fetched_at = datetime.utcnow()
+        else:
+            session.add(CompanyInfo(name=name, summary=summary))
+
+    return {"name": name, "summary": summary, "cached": False}
+
+
+@app.post("/run/company-lookup")
+async def run_company_lookup():
+    async def gen():
+        from db.session import get_session, init_db
+        from db.models import Job, CompanyInfo
+        init_db()
+
+        with get_session() as session:
+            all_companies = {
+                row[0] for row in session.query(Job.company).distinct().all() if row[0]
+            }
+            cached = {
+                row[0] for row in session.query(CompanyInfo.name).all()
+            }
+
+        todo = sorted(all_companies - cached)
+        yield f"Found {len(all_companies)} unique companies, {len(todo)} not yet looked up"
+
+        done = 0
+        for name in todo:
+            try:
+                summary = await _fetch_company_summary(name)
+                with get_session() as session:
+                    existing = session.query(CompanyInfo).filter(CompanyInfo.name == name).first()
+                    if existing:
+                        existing.summary = summary
+                        existing.fetched_at = datetime.utcnow()
+                    else:
+                        session.add(CompanyInfo(name=name, summary=summary))
+                done += 1
+                yield f"✓ {name[:50]}"
+            except Exception as e:
+                yield f"✗ {name[:50]}: {str(e)[:60]}"
+
+        yield f"✓ Done — {done}/{len(todo)} companies looked up"
+    return await sse(gen())
+
+
+class TranslateRequest(BaseModel):
+    job_id: int
+    target: str = "en"  # "en" or "zh"
+
+
+@app.post("/run/translate")
+async def run_translate(req: TranslateRequest):
+    from db.models import Job
+    from db.session import get_session
+    from llm.router import call_llm
+
+    with get_session() as session:
+        job = session.get(Job, req.job_id)
+        if not job:
+            raise HTTPException(404, "Job not found")
+        description = job.description or ""
+
+    if not description:
+        raise HTTPException(400, "No description to translate")
+
+    target_name = "English" if req.target == "en" else "Simplified Chinese (中文)"
+    system = (
+        f"You are a professional translator. Translate the following job description to {target_name}. "
+        "Output only the translated text, preserving the structure and formatting. Do not add any preamble."
+    )
+    text, _ = await call_llm(user=description, system=system, max_tokens=3000)
+    return {"translated": text}
 
 
 class CoverRequest(BaseModel):

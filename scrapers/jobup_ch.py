@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional, Tuple
 from urllib.parse import urlencode
 
 from scrapers.base import BaseScraper, ScrapedJob
@@ -84,4 +84,26 @@ class JobupChScraper(BaseScraper):
             )
         except Exception as exc:
             print(f"[jobup.ch] parse error: {exc}")
+            return None
+
+    async def fetch_full_description(self, source_job_id: str) -> Optional[Tuple[str, str]]:
+        from bs4 import BeautifulSoup
+        url = (
+            source_job_id
+            if source_job_id.startswith("http")
+            else f"https://www.jobup.ch/en/jobs/detail/{source_job_id}/"
+        )
+        try:
+            resp = await self._fetch(url)
+            if resp.status_code == 404:
+                return ()  # type: ignore
+            soup = BeautifulSoup(resp.text, "lxml")
+            el = soup.select_one("[class*='grid-area_description']")
+            if el:
+                text = el.get_text(separator="\n", strip=True)
+                if len(text) > 100:
+                    return text, url
+            return None
+        except Exception as exc:
+            print(f"[jobup.ch] enrich error for {source_job_id}: {exc}")
             return None

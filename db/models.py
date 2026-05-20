@@ -154,6 +154,16 @@ class Application(Base):
     job: Mapped[Job] = relationship("Job", back_populates="application")
 
 
+class CompanyInfo(Base):
+    """Cached LLM-generated company overview, keyed by company name."""
+    __tablename__ = "company_info"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(300), unique=True, index=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+
+
 class JobEvent(Base):
     """
     Timeline event for a job — tracks every meaningful interaction.

@@ -105,8 +105,8 @@ class EFinancialCareersScraper(BaseScraper):
     async def fetch_full_description(self, job_url: str) -> Optional[Tuple[str, str]]:
         """Fetch full description from an eFinancialCareers detail page.
 
-        The page is SSR'd with job data embedded in an application/ld+json script block.
-        Returns (description, canonical_url), () for 404/gone, or None on error.
+        Page embeds a script[type=application/json] whose keys are API URLs.
+        The branding key contains data.data.description (HTML string).
         """
         if not job_url or not job_url.startswith("http"):
             return None
@@ -122,23 +122,23 @@ class EFinancialCareersScraper(BaseScraper):
             if canon_el:
                 canonical = canon_el.get("href", "")
 
-            # Job data is in a script[type=application/ld+json] that contains
-            # a 'description' key (not a standard @type:JobPosting, but a DHI custom object)
-            for script in soup.find_all("script"):
-                stype = script.get("type", "")
-                if "json" not in stype:
-                    continue
+            for script in soup.find_all("script", type="application/json"):
                 try:
-                    data = json.loads(script.string or "")
-                    if not isinstance(data, dict):
+                    outer = json.loads(script.string or "")
+                    if not isinstance(outer, dict):
                         continue
-                    raw_desc = data.get("description", "")
-                    if len(raw_desc) > 200:
-                        desc = BeautifulSoup(raw_desc, "lxml").get_text(
-                            separator="\n", strip=True
-                        )
-                        return desc, canonical or job_url
-                except (json.JSONDecodeError, AttributeError):
+                    for key, val in outer.items():
+                        if "branding" not in key or not isinstance(val, dict):
+                            continue
+                        body = val.get("body", "")
+                        inner = json.loads(body) if isinstance(body, str) else body
+                        raw_desc = (inner.get("data") or {}).get("description", "")
+                        if raw_desc and len(raw_desc) > 200:
+                            desc = BeautifulSoup(raw_desc, "lxml").get_text(
+                                separator="\n", strip=True
+                            )
+                            return desc, canonical or job_url
+                except (json.JSONDecodeError, AttributeError, TypeError):
                     continue
 
             return None

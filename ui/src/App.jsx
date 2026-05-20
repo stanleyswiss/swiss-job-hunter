@@ -422,9 +422,16 @@ export default function App() {
   const [filterText, setFilterText] = useState("");
   const [coverLetter, setCoverLetter] = useState("");
   const [coverLang, setCoverLang] = useState("en");
+  const [archiveBelow, setArchiveBelow] = useState(10); // percent
+  const [purgeBelow, setPurgeBelow] = useState(10); // percent
   const [mainTab, setMainTab] = useState("board");   // board | tracker
   const [rightTab, setRightTab] = useState("detail"); // detail | timeline | apply
   const [applyModal, setApplyModal] = useState(false);
+  const [translatedDesc, setTranslatedDesc] = useState("");
+  const [translating, setTranslating] = useState(false);
+  const [showOriginalDesc, setShowOriginalDesc] = useState(false);
+  const [companyCache, setCompanyCache] = useState({});  // name → summary
+  const [lookingUpCompany, setLookingUpCompany] = useState(false);
 
   const addLog = useCallback(l => setLog(p=>[...p.slice(-300),l]),[]);
 
@@ -447,10 +454,58 @@ export default function App() {
   useEffect(() => { fetchJobs(); fetchStats(); }, [fetchJobs, fetchStats]);
 
   // Select job → auto-mark viewed
+  const translateDesc = async (job, target) => {
+    setTranslating(true);
+    setTranslatedDesc("");
+    setShowOriginalDesc(false);
+    try {
+      const r = await fetch(`${API}/run/translate`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job_id: job.id, target }),
+      });
+      const d = await r.json();
+      if (d.translated) { setTranslatedDesc(d.translated); addLog(`✓ Translated to ${target === "en" ? "English" : "中文"}`); }
+      else addLog("✗ Translation failed");
+    } catch (e) { addLog(`✗ ${e.message}`); }
+    setTranslating(false);
+  };
+
+  const lookupCompany = useCallback(async (name) => {
+    if (!name || companyCache[name] !== undefined) return;
+    // check cache first (GET)
+    try {
+      const r = await fetch(`${API}/companies/${encodeURIComponent(name)}`);
+      if (r.ok) {
+        const d = await r.json();
+        if (d.summary) { setCompanyCache(p => ({...p, [name]: d.summary})); return; }
+      }
+    } catch {}
+    setCompanyCache(p => ({...p, [name]: null})); // mark as checked, not cached
+  }, [companyCache]);
+
+  const triggerCompanyLookup = useCallback(async (name) => {
+    setLookingUpCompany(true);
+    try {
+      const r = await fetch(`${API}/companies/lookup`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({name}),
+      });
+      const d = await r.json();
+      if (d.summary) {
+        setCompanyCache(p => ({...p, [name]: d.summary}));
+        addLog(`✓ Company info: ${name}`);
+      }
+    } catch (e) { addLog(`✗ ${e.message}`); }
+    setLookingUpCompany(false);
+  }, [addLog]);
+
   const selectJob = useCallback(async (job) => {
     setSelected(job);
     setCoverLetter("");
+    setTranslatedDesc("");
+    setShowOriginalDesc(false);
     setRightTab("detail");
+    lookupCompany(job.company);
     if (!["viewed","applied","interviewing","offer","rejected"].includes(job.status)) {
       await fetch(`${API}/jobs/${job.id}/view`, { method:"POST" });
       fetchJobs(); fetchStats();
@@ -605,17 +660,24 @@ export default function App() {
             ? <TrackerBoard onSelectJob={j=>{setSelected(j);setMainTab("board");}}/>
             : <>
               {/* LEFT PANEL */}
-              <div style={{width:272,borderRight:"1px solid #d4dece",display:"flex",
-                flexDirection:"column",background:"#f0f3ed",flexShrink:0}}>
+              <div style={{width:300,borderRight:"1px solid #d4dece",display:"flex",
+                flexDirection:"column",background:"#f0f3ed",flexShrink:0,overflow:"hidden"}}>
 
                 {/* Search */}
-                <div style={{padding:14,borderBottom:"1px solid #d4dece"}}>
-                  <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.12em",fontWeight:700,marginBottom:8}}>① SEARCH</div>
+                <div style={{padding:"10px 12px",borderBottom:"1px solid #d4dece"}}>
+                  <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.12em",fontWeight:700,marginBottom:6}}>① SEARCH</div>
                   <input value={searchKw} onChange={e=>setSearchKw(e.target.value)}
-                    placeholder="keyword" style={{...inp,marginBottom:6}}/>
+                    placeholder="keyword" style={{...inp,marginBottom:5}}/>
                   <input value={searchLoc} onChange={e=>setSearchLoc(e.target.value)}
-                    placeholder="location" style={{...inp,marginBottom:8}}/>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:10}}>
+                    placeholder="location" style={{...inp,marginBottom:7}}/>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:8}}>
+                    <button onClick={()=>setSearchSrc(searchSrc.length===SOURCES.length?[]:SOURCES)} style={{
+                      fontSize:8,padding:"2px 6px",borderRadius:3,border:"1px solid",
+                      borderColor:searchSrc.length===SOURCES.length?"#2e7d5240":"#d4dece",
+                      background:searchSrc.length===SOURCES.length?"#2e7d5215":"transparent",
+                      color:searchSrc.length===SOURCES.length?"#2e7d52":"#6b8c7a",
+                      cursor:"pointer",letterSpacing:"0.04em",fontFamily:"monospace",fontWeight:700,
+                    }}>ALL</button>
                     {SOURCES.map(s=>(
                       <button key={s} onClick={()=>setSearchSrc(p=>p.includes(s)?p.filter(x=>x!==s):[...p,s])} style={{
                         fontSize:8,padding:"2px 6px",borderRadius:3,border:"1px solid",
@@ -630,12 +692,11 @@ export default function App() {
                     loading={loading.search} label="RUN SEARCH" icon="⬇" color="#2e7d52"/>
                 </div>
 
-                {/* Pipeline */}
-                <div style={{padding:14,borderBottom:"1px solid #d4dece",display:"flex",flexDirection:"column",gap:7}}>
-                  <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.12em",fontWeight:700,marginBottom:2}}>② PIPELINE</div>
+                {/* Pipeline + Cleanup */}
+                <div style={{padding:"10px 12px",borderBottom:"1px solid #d4dece",display:"flex",flexDirection:"column",gap:6}}>
+                  <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.12em",fontWeight:700,marginBottom:1}}>② PIPELINE</div>
                   <Btn onClick={()=>{
-                    // Enrich each selected source (server rejects unsupported ones gracefully)
-                    const enrichable = ["jobs.ch","jobscout24.ch","swissdevjobs.ch","züri.jobs","efinancialcareers.ch","linkedin.com","michael-page.ch"];
+                    const enrichable = ["jobs.ch","jobscout24.ch","swissdevjobs.ch","züri.jobs","efinancialcareers.ch","jobup.ch","linkedin.com","michael-page.ch"];
                     const sources = searchSrc.filter(s => enrichable.includes(s));
                     if(sources.length) sources.forEach(src => runStream("run/enrich",{limit:50,source:src},`enrich-${src}`));
                     else runStream("run/enrich",{limit:50,source:searchSrc[0]||"jobs.ch"},"enrich");
@@ -645,15 +706,43 @@ export default function App() {
                   <Btn onClick={()=>runStream("run/analyze",{limit:100,llm:false},"analyze")}
                     loading={loading.analyze} label="SCORE (KEYWORD)" icon="⚡"
                     color="#f59e0b" disabled={!stats.total}/>
-                  <Btn onClick={()=>runStream("run/analyze",{limit:20,llm:true},"analyze-llm")}
-                    loading={loading["analyze-llm"]} label="SCORE (LLM)" icon="🧠"
-                    color="#a78bfa" disabled={!stats.total}/>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <Btn onClick={()=>runStream("run/analyze",{limit:200,llm:true,archive_below:archiveBelow/100},"analyze-llm")}
+                      loading={loading["analyze-llm"]} label="SCORE (LLM)" icon="🧠"
+                      color="#a78bfa" disabled={!stats.total}/>
+                    <div style={{display:"flex",alignItems:"center",gap:4,marginLeft:"auto"}}>
+                      <span style={{fontSize:8,color:"#6b8c7a",fontFamily:"monospace",whiteSpace:"nowrap"}}>archive &lt;</span>
+                      <input type="number" min={0} max={50} step={5} value={archiveBelow}
+                        onChange={e=>setArchiveBelow(Number(e.target.value))}
+                        style={{width:44,padding:"2px 4px",borderRadius:3,border:"1px solid #c8d8c4",
+                          background:"#fff",color:"#2c4a38",fontSize:10,fontFamily:"monospace",textAlign:"center"}}/>
+                      <span style={{fontSize:8,color:"#6b8c7a",fontFamily:"monospace"}}>%</span>
+                    </div>
+                  </div>
+                  <Btn onClick={()=>runStream("run/company-lookup",{},"company-lookup")}
+                    loading={loading["company-lookup"]} label="LOOKUP COMPANIES" icon="🏢"
+                    color="#2e7d52" disabled={!stats.total}/>
+                  <div style={{height:1,background:"#d4dece",margin:"2px 0"}}/>
+                  <div style={{display:"flex",alignItems:"center",gap:5}}>
+                    <Btn onClick={()=>runStream("run/purge-archived",{max_score:purgeBelow/100,dry_run:true},"purge-preview")}
+                      loading={loading["purge-preview"]} label="PREVIEW" icon="🔍" small color="#6b8c7a"/>
+                    <Btn onClick={()=>runStream("run/purge-archived",{max_score:purgeBelow/100,dry_run:false},"purge")}
+                      loading={loading["purge"]} label="PURGE" icon="🗑" small color="#f87171"/>
+                    <div style={{display:"flex",alignItems:"center",gap:4,marginLeft:"auto"}}>
+                      <span style={{fontSize:8,color:"#6b8c7a",fontFamily:"monospace",whiteSpace:"nowrap"}}>purge &lt;</span>
+                      <input type="number" min={0} max={50} step={5} value={purgeBelow}
+                        onChange={e=>setPurgeBelow(Number(e.target.value))}
+                        style={{width:44,padding:"2px 4px",borderRadius:3,border:"1px solid #c8d8c4",
+                          background:"#fff",color:"#2c4a38",fontSize:10,fontFamily:"monospace",textAlign:"center"}}/>
+                      <span style={{fontSize:8,color:"#6b8c7a",fontFamily:"monospace"}}>%</span>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Filter */}
-                <div style={{padding:14,borderBottom:"1px solid #d4dece"}}>
-                  <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.12em",fontWeight:700,marginBottom:8}}>FILTER</div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:8}}>
+                <div style={{padding:"10px 12px",borderBottom:"1px solid #d4dece"}}>
+                  <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.12em",fontWeight:700,marginBottom:6}}>FILTER</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:7}}>
                     {["all","new","shortlisted","viewed","applied","interviewing","offer","rejected"].map(s=>(
                       <button key={s} onClick={()=>setFilterStatus(s)} style={{
                         fontSize:8,padding:"2px 7px",borderRadius:3,border:"1px solid",
@@ -754,9 +843,28 @@ export default function App() {
                           <div style={{fontSize:14,fontWeight:700,color:"#1a2e20",marginBottom:5,lineHeight:1.3}}>
                             {selected.title}
                           </div>
-                          <div style={{fontSize:11,color:"#4a7a60",marginBottom:8}}>
-                            {selected.company} · {selected.location}
+                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                            <span style={{fontSize:11,color:"#4a7a60"}}>
+                              {selected.company} · {selected.location}
+                            </span>
+                            {companyCache[selected.company] === null && !lookingUpCompany && (
+                              <button onClick={()=>triggerCompanyLookup(selected.company)} style={{
+                                fontSize:8,padding:"1px 6px",borderRadius:3,
+                                border:"1px solid #2e7d5230",background:"#2e7d5210",
+                                color:"#2e7d52",cursor:"pointer",fontFamily:"monospace",fontWeight:700,
+                              }}>🔍 lookup</button>
+                            )}
+                            {lookingUpCompany && <span style={{fontSize:8,color:"#6b8c7a",fontFamily:"monospace"}}>⟳</span>}
                           </div>
+                          {companyCache[selected.company] && (
+                            <div style={{
+                              fontSize:10,color:"#4a7a60",lineHeight:1.6,
+                              background:"#e2e8dc",borderRadius:5,padding:"8px 10px",
+                              border:"1px solid #d4dece",marginBottom:8,
+                            }}>
+                              {companyCache[selected.company]}
+                            </div>
+                          )}
                           <div style={{display:"flex",gap:7,flexWrap:"wrap",alignItems:"center"}}>
                             <Badge status={selected.status}/>
                             {selected.employment_type&&<span style={{fontSize:9,color:"#5a7a68",background:"#d4dece",padding:"2px 6px",borderRadius:3}}>{selected.employment_type}</span>}
@@ -772,10 +880,33 @@ export default function App() {
                         )}
 
                         <div style={{marginBottom:12}}>
-                          <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.1em",fontWeight:700,marginBottom:6}}>JD</div>
+                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+                            <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.1em",fontWeight:700}}>JD</div>
+                            {selected.description && (<>
+                              {["en","zh"].map(lang=>(
+                                <button key={lang} onClick={()=>translateDesc(selected,lang)} disabled={translating} style={{
+                                  fontSize:8,padding:"1px 6px",borderRadius:3,
+                                  border:"1px solid #2e7d5230",background:"#2e7d5210",
+                                  color:translating?"#6b8c7a":"#2e7d52",
+                                  cursor:translating?"not-allowed":"pointer",fontFamily:"monospace",fontWeight:700,
+                                }}>{translating?"⟳":lang==="en"?"→EN":"→中文"}</button>
+                              ))}
+                              {translatedDesc && (
+                                <button onClick={()=>setShowOriginalDesc(p=>!p)} style={{
+                                  fontSize:8,padding:"1px 6px",borderRadius:3,
+                                  border:"1px solid #f59e0b30",background:"#f59e0b10",
+                                  color:"#f59e0b",cursor:"pointer",fontFamily:"monospace",fontWeight:700,
+                                }}>{showOriginalDesc?"→译文":"→原文"}</button>
+                              )}
+                            </>)}
+                          </div>
                           <div style={{fontSize:10,color:"#708878",lineHeight:1.7,maxHeight:200,overflowY:"auto",
-                            background:"#e2e8dc",borderRadius:5,padding:"9px 11px",border:"1px solid #d4dece"}}>
-                            {selected.description||<span style={{color:"#6b8c7a"}}>no description — run Enrich</span>}
+                            background:"#e2e8dc",borderRadius:5,padding:"9px 11px",border:"1px solid #d4dece",
+                            whiteSpace:"pre-wrap"}}>
+                            {selected.description
+                              ? (translatedDesc && !showOriginalDesc ? translatedDesc : selected.description)
+                              : <span style={{color:"#6b8c7a"}}>no description — run Enrich</span>
+                            }
                           </div>
                         </div>
 
