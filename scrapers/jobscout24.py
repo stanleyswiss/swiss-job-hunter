@@ -26,7 +26,9 @@ class JobScout24Scraper(BaseScraper):
     ) -> AsyncGenerator[ScrapedJob, None]:
         seen: set[str] = set()
         for page in range(1, max_pages + 1):
-            params: dict = {"q": keyword, "where": location}
+            params: dict = {"q": keyword}
+            if location:
+                params["where"] = location
             if page > 1:
                 params["page"] = page
             url = f"{_SEARCH_URL}?{urlencode(params)}"

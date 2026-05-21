@@ -23,7 +23,9 @@ class MichaelPageScraper(BaseScraper):
         self, keyword: str, location: str = "Zürich", max_pages: int = 5
     ) -> AsyncGenerator[ScrapedJob, None]:
         for page in range(max_pages):
-            params: dict = {"keywords": keyword, "location": location}
+            params: dict = {"keywords": keyword}
+            if location:
+                params["location"] = location
             if page > 0:
                 params["page"] = page
             url = f"{_SEARCH_URL}?{urlencode(params)}"

@@ -42,7 +42,9 @@ class SwissDevJobsScraper(BaseScraper):
     async def scrape(
         self, keyword: str, location: str = "Zürich", max_pages: int = 5
     ) -> AsyncGenerator[ScrapedJob, None]:
-        params = {"position": keyword, "city": location}
+        params: dict = {"position": keyword}
+        if location:
+            params["city"] = location
         search_url = f"{_BASE_URL}/jobs?{urlencode(params)}"
 
         async with async_playwright() as pw:

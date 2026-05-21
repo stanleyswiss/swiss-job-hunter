@@ -28,10 +28,11 @@ class JobupChScraper(BaseScraper):
         for page in range(1, max_pages + 1):
             params = {
                 "term": keyword,
-                "location": location,
                 "page": page,
                 "rows": _PAGE_SIZE,
             }
+            if location:
+                params["location"] = location
             url = f"{_API_BASE}?{urlencode(params)}"
 
             try:

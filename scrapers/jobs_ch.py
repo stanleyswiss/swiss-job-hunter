@@ -34,11 +34,12 @@ class JobsChScraper(BaseScraper):
         for page in range(1, max_pages + 1):
             params = {
                 "query": keyword,
-                "location": location,
                 "page": page,
                 "num_pages": _PAGE_SIZE,
                 "sort": "date",
             }
+            if location:
+                params["location"] = location
             url = f"{_API_BASE}?{urlencode(params)}"
 
             try:

@@ -78,7 +78,7 @@ function Btn({ onClick, label, icon, color="#2e7d52", disabled, small, loading }
   return (
     <button onClick={onClick} disabled={disabled||loading} style={{
       display:"flex",alignItems:"center",gap:6,
-      padding: small ? "5px 10px" : "8px 14px",
+      padding: small ? "4px 8px" : "6px 12px",
       borderRadius:4,border:`1px solid ${color}35`,
       background:`${color}0d`,color:disabled?"#6b8c7a":color,
       fontSize: small?10:11,fontWeight:700,letterSpacing:"0.05em",
@@ -100,8 +100,8 @@ function LogPane({ lines }) {
   return (
     <div ref={ref} style={{
       flex:1,overflowY:"auto",background:"#e2e8dc",borderRadius:6,
-      padding:"10px 12px",fontFamily:"monospace",fontSize:10,
-      lineHeight:1.9,color:"#5a7a68",border:"1px solid #d4dece",
+      padding:"8px 10px",fontFamily:"monospace",fontSize:10,
+      lineHeight:1.5,color:"#5a7a68",border:"1px solid #d4dece",
     }}>
       {lines.length===0
         ? <span style={{color:"#d4dece"}}>// output appears here</span>
@@ -120,9 +120,9 @@ function LogPane({ lines }) {
 
 function StatCard({ label, value, color="#2e7d52" }) {
   return (
-    <div style={{background:"#e2e8dc",border:"1px solid #d4dece",borderRadius:7,padding:"14px 18px",minWidth:95}}>
-      <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.1em",fontWeight:700,marginBottom:5,fontFamily:"monospace"}}>{label}</div>
-      <div style={{fontSize:26,fontWeight:700,color,fontFamily:"monospace",lineHeight:1}}>{value??0}</div>
+    <div style={{background:"#e2e8dc",border:"1px solid #d4dece",borderRadius:7,padding:"8px 14px",minWidth:80}}>
+      <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.1em",fontWeight:700,marginBottom:3,fontFamily:"monospace"}}>{label}</div>
+      <div style={{fontSize:22,fontWeight:700,color,fontFamily:"monospace",lineHeight:1}}>{value??0}</div>
     </div>
   );
 }
@@ -422,6 +422,7 @@ export default function App() {
   const [searchSrc, setSearchSrc] = useState(["jobs.ch"]);
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterText, setFilterText] = useState("");
+  const [filterMinScore, setFilterMinScore] = useState(0);
   const [coverLetter, setCoverLetter] = useState("");
   const [coverLang, setCoverLang] = useState("en");
   const [archiveBelow, setArchiveBelow] = useState(10); // percent
@@ -453,8 +454,8 @@ export default function App() {
   }, [filterStatus, filterText, direction, addLog, backendOk]);
 
   const fetchStats = useCallback(async () => {
-    try { const r=await fetch(`${API}/stats`); if(r.ok) setStats(await r.json()); } catch {}
-  }, []);
+    try { const r=await fetch(`${API}/stats?threshold=${filterMinScore/100}`); if(r.ok) setStats(await r.json()); } catch {}
+  }, [filterMinScore]);
 
   useEffect(() => { fetchJobs(); fetchStats(); }, [fetchJobs, fetchStats]);
 
@@ -592,7 +593,10 @@ export default function App() {
     if (selected?.id===jobId) setSelected(p=>({...p,status}));
   };
 
-  const visible = jobs.filter(j=>filterStatus==="all"||j.status===filterStatus);
+  const visible = jobs.filter(j=>
+    (filterStatus==="all"||j.status===filterStatus) &&
+    (filterMinScore===0 || (j.match_score!=null && j.match_score*100 >= filterMinScore))
+  );
 
   const Tab = ({id,label,active,onClick}) => (
     <button onClick={onClick} style={{
@@ -644,7 +648,7 @@ export default function App() {
 
         {/* STATS */}
         <div style={{
-          display:"flex",gap:10,padding:"12px 20px",
+          display:"flex",gap:8,padding:"8px 16px",
           borderBottom:"1px solid #d4dece",overflowX:"auto",flexShrink:0,
           background:"#f0f3ed",
         }}>
@@ -655,6 +659,7 @@ export default function App() {
           <StatCard label="OFFERS" value={stats.by_status?.offer??0} color="#fb923c"/>
           <StatCard label="SHORTLISTED" value={stats.by_status?.shortlisted??0} color="#f59e0b"/>
           <div style={{flex:1}}/>
+          {stats.above_threshold!=null && <StatCard label={`≥${Math.round((stats.threshold??0.1)*100)}%`} value={stats.above_threshold} color="#2e7d52"/>}
           {stats.avg_score && <StatCard label="AVG MATCH" value={`${Math.round(stats.avg_score*100)}%`} color="#2e7d52"/>}
         </div>
 
@@ -669,12 +674,12 @@ export default function App() {
                 flexDirection:"column",background:"#f0f3ed",flexShrink:0,overflow:"hidden"}}>
 
                 {/* Search */}
-                <div style={{padding:"10px 12px",borderBottom:"1px solid #d4dece"}}>
-                  <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.12em",fontWeight:700,marginBottom:6}}>① SEARCH</div>
-                  <div style={{display:"flex",gap:3,marginBottom:7}}>
+                <div style={{padding:"6px 10px",borderBottom:"1px solid #d4dece"}}>
+                  <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.12em",fontWeight:700,marginBottom:4}}>① SEARCH</div>
+                  <div style={{display:"flex",gap:3,marginBottom:4}}>
                     {["all",...DIRECTIONS].map(d=>(
                       <button key={d} onClick={()=>setDirection(d)} style={{
-                        flex:1,fontSize:8,padding:"3px 0",borderRadius:3,border:"1px solid",
+                        flex:1,fontSize:8,padding:"2px 0",borderRadius:3,border:"1px solid",
                         borderColor:direction===d?"#2e7d5240":"#d4dece",
                         background:direction===d?"#2e7d5215":"transparent",
                         color:direction===d?"#2e7d52":"#6b8c7a",
@@ -683,15 +688,22 @@ export default function App() {
                     ))}
                   </div>
                   <input value={searchKw} onChange={e=>setSearchKw(e.target.value)}
-                    placeholder="keyword" style={{...inp,marginBottom:5}}/>
-                  <div style={{display:"flex",gap:5,marginBottom:7}}>
+                    placeholder="keyword" style={{...inp,marginBottom:4}}/>
+                  <div style={{display:"flex",gap:5,marginBottom:4}}>
                     <input value={searchLoc} onChange={e=>setSearchLoc(e.target.value)}
-                      placeholder="location" style={{...inp,flex:1}}/>
+                      placeholder="city (blank = all CH)" style={{...inp,flex:1}}/>
+                    <button onClick={()=>setSearchLoc("")} title="Search all Switzerland" style={{
+                      padding:"4px 7px",borderRadius:4,border:"1px solid",
+                      borderColor:searchLoc===""?"#2e7d5240":"#d4dece",
+                      background:searchLoc===""?"#2e7d5215":"transparent",
+                      color:searchLoc===""?"#2e7d52":"#6b8c7a",
+                      fontSize:9,fontWeight:700,fontFamily:"monospace",cursor:"pointer",whiteSpace:"nowrap",
+                    }}>ALL CH</button>
                     <input type="number" min={1} max={40} value={searchPages}
                       onChange={e=>setSearchPages(Math.max(1,parseInt(e.target.value)||1))}
-                      title="pages per source" style={{...inp,width:44,textAlign:"center"}}/>
+                      title="pages per source" style={{...inp,width:64,textAlign:"center"}}/>
                   </div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:8}}>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:5}}>
                     <button onClick={()=>setSearchSrc(searchSrc.length===SOURCES.length?[]:SOURCES)} style={{
                       fontSize:8,padding:"2px 6px",borderRadius:3,border:"1px solid",
                       borderColor:searchSrc.length===SOURCES.length?"#2e7d5240":"#d4dece",
@@ -722,16 +734,26 @@ export default function App() {
                 </div>
 
                 {/* Pipeline + Cleanup */}
-                <div style={{padding:"10px 12px",borderBottom:"1px solid #d4dece",display:"flex",flexDirection:"column",gap:6}}>
-                  <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.12em",fontWeight:700,marginBottom:1}}>② PIPELINE</div>
+                <div style={{padding:"6px 10px",borderBottom:"1px solid #d4dece",display:"flex",flexDirection:"column",gap:4}}>
+                  <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.12em",fontWeight:700,marginBottom:0}}>② PIPELINE</div>
                   <Btn onClick={()=>{
                     const enrichable = ["jobs.ch","jobscout24.ch","swissdevjobs.ch","züri.jobs","efinancialcareers.ch","jobup.ch","linkedin.com","michael-page.ch"];
                     const sources = searchSrc.filter(s => enrichable.includes(s));
-                    if(sources.length) sources.forEach(src => runStream("run/enrich",{limit:50,source:src},`enrich-${src}`));
-                    else runStream("run/enrich",{limit:50,source:searchSrc[0]||"jobs.ch"},"enrich");
+                    const dir = direction==="all"?null:direction;
+                    if(sources.length) sources.forEach(src => runStream("run/enrich",{limit:200,source:src,rescore_llm:false,direction:dir},`enrich-${src}`));
+                    else runStream("run/enrich",{limit:200,source:searchSrc[0]||"jobs.ch",rescore_llm:false,direction:dir},"enrich");
                   }}
                     loading={loading.enrich} label="ENRICH DESCRIPTIONS" icon="📄"
                     color="#2e7d52" disabled={!stats.total}/>
+                  <Btn onClick={()=>{
+                    const enrichable = ["jobs.ch","jobscout24.ch","swissdevjobs.ch","züri.jobs","efinancialcareers.ch","jobup.ch","linkedin.com","michael-page.ch"];
+                    const sources = searchSrc.filter(s => enrichable.includes(s));
+                    const dir = direction==="all"?null:direction;
+                    if(sources.length) sources.forEach(src => runStream("run/enrich",{limit:200,source:src,rescore_llm:true,direction:dir},`enrich-llm-${src}`));
+                    else runStream("run/enrich",{limit:200,source:searchSrc[0]||"jobs.ch",rescore_llm:true,direction:dir},"enrich-llm");
+                  }}
+                    loading={loading["enrich-llm"]} label="ENRICH + LLM SCORE" icon="🧠"
+                    color="#a78bfa" disabled={!stats.total}/>
                   <Btn onClick={()=>runStream("run/analyze",{limit:100,llm:false,direction:direction==="all"?null:direction},"analyze")}
                     loading={loading.analyze} label="SCORE (KEYWORD)" icon="⚡"
                     color="#f59e0b" disabled={!stats.total}/>
@@ -769,9 +791,9 @@ export default function App() {
                 </div>
 
                 {/* Filter */}
-                <div style={{padding:"10px 12px",borderBottom:"1px solid #d4dece"}}>
-                  <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.12em",fontWeight:700,marginBottom:6}}>FILTER</div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:7}}>
+                <div style={{padding:"6px 10px",borderBottom:"1px solid #d4dece"}}>
+                  <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.12em",fontWeight:700,marginBottom:4}}>FILTER</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:5}}>
                     {["all","new","shortlisted","viewed","applied","interviewing","offer","rejected"].map(s=>(
                       <button key={s} onClick={()=>setFilterStatus(s)} style={{
                         fontSize:8,padding:"2px 7px",borderRadius:3,border:"1px solid",
@@ -782,12 +804,25 @@ export default function App() {
                       }}>{s.toUpperCase()}</button>
                     ))}
                   </div>
-                  <input value={filterText} onChange={e=>setFilterText(e.target.value)}
-                    placeholder="search title / company..." style={{...inp,fontSize:10}}/>
+                  <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                    <input value={filterText} onChange={e=>setFilterText(e.target.value)}
+                      placeholder="search title / company..." style={{...inp,fontSize:10,flex:1}}/>
+                    <div style={{display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
+                      <span style={{fontSize:9,color:"#5a7a68",fontFamily:"monospace",whiteSpace:"nowrap"}}>≥</span>
+                      <input type="number" min={0} max={100} value={filterMinScore}
+                        onChange={e=>{const v=Math.max(0,Math.min(100,parseInt(e.target.value)||0));setFilterMinScore(v);}}
+                        title="min score %" style={{...inp,width:52,textAlign:"center",fontSize:10}}/>
+                      <span style={{fontSize:9,color:"#5a7a68",fontFamily:"monospace"}}>%</span>
+                      {filterMinScore>0&&<button onClick={()=>setFilterMinScore(0)} style={{
+                        fontSize:9,padding:"2px 5px",borderRadius:3,border:"1px solid #d4dece",
+                        background:"transparent",color:"#6b8c7a",cursor:"pointer",fontFamily:"monospace",
+                      }}>✕</button>}
+                    </div>
+                  </div>
                 </div>
 
                 {/* Log */}
-                <div style={{flex:1,padding:12,display:"flex",flexDirection:"column",gap:6,overflow:"hidden"}}>
+                <div style={{flex:1,padding:"8px 10px",display:"flex",flexDirection:"column",gap:4,overflow:"hidden"}}>
                   <div style={{display:"flex",justifyContent:"space-between",
                     fontSize:9,color:"#5a7a68",letterSpacing:"0.12em",fontWeight:700}}>
                     <span>LOG</span>

@@ -35,9 +35,10 @@ class EFinancialCareersScraper(BaseScraper):
             page = await context.new_page()
             try:
                 for page_num in range(1, max_pages + 1):
+                    loc_param = f"&location={quote_plus(location)}" if location else ""
                     url = (
                         f"{_SEARCH_URL}/{slug}"
-                        f"?q={quote_plus(keyword)}&location={quote_plus(location)}"
+                        f"?q={quote_plus(keyword)}{loc_param}"
                         f"&countryCode=CH&radius=40&radiusUnit=km&pageSize=15"
                         f"&currencyCode=CHF&language=de&enableVectorSearch=true"
                         f"&page={page_num}"

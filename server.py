@@ -87,7 +87,7 @@ def list_jobs(status: str = "all", q: str = "", direction: str = "all"):
 
 
 @app.get("/stats")
-def get_stats():
+def get_stats(threshold: float = 0.1):
     from db.session import get_session, init_db
     from db.models import Job
     init_db()
@@ -103,6 +103,9 @@ def get_stats():
             Job.match_score.isnot(None)
         ).scalar()
         top_score = session.query(func.max(Job.match_score)).scalar()
+        above_threshold = session.query(func.count(Job.id)).filter(
+            Job.match_score >= threshold
+        ).scalar() or 0
 
     return {
         "total": total,
@@ -110,6 +113,8 @@ def get_stats():
         "by_source": by_source,
         "avg_score": float(avg_score) if avg_score else None,
         "top_score": float(top_score) if top_score else None,
+        "above_threshold": above_threshold,
+        "threshold": threshold,
     }
 
 
@@ -188,7 +193,7 @@ async def run_search(req: SearchRequest):
         from db.session import get_session
         init_db()
 
-        yield f"Searching: {req.keyword} in {req.location}"
+        yield f"Searching: {req.keyword} in {req.location or 'Switzerland (all)'}"
         total_new = 0
 
         for source_name in req.sources:
@@ -232,7 +237,9 @@ async def run_search(req: SearchRequest):
                             yield f"  ✗ skipped one job: {str(e)[:80]}"
                             continue
             except Exception as e:
-                yield f"✗ {source_name} failed: {str(e)[:120]}"
+                total_new += new_count
+                partial = f", saved {new_count} before failure" if new_count else ""
+                yield f"✗ {source_name} failed{partial}: {str(e)[:120]}"
                 continue
 
             if found_count == 0:
@@ -250,6 +257,8 @@ async def run_search(req: SearchRequest):
 class EnrichRequest(BaseModel):
     limit: int = 50
     source: str = "jobs.ch"
+    rescore_llm: bool = False
+    direction: Optional[str] = None
 
 
 @app.post("/run/enrich")
@@ -261,6 +270,11 @@ async def run_enrich(req: EnrichRequest):
             jobs = (
                 session.query(Job)
                 .filter(Job.source == req.source)
+                .filter(
+                    (Job.description == None) |  # noqa: E711
+                    (Job.description == "") |
+                    (func.length(Job.description) < 1500)
+                )
                 .order_by(Job.scraped_at.desc())
                 .limit(req.limit)
                 .all()
@@ -312,6 +326,7 @@ async def run_enrich(req: EnrichRequest):
         scraper_cls = getattr(module, cls_name)
 
         updated = 0
+        enriched_ids = []
         try:
             async with scraper_cls() as scraper:
                 for job_id, source_job_id in to_enrich:
@@ -326,6 +341,7 @@ async def run_enrich(req: EnrichRequest):
                                     if canonical_url:
                                         job.url = canonical_url
                             updated += 1
+                            enriched_ids.append(job_id)
                             yield f"✓ job #{job_id} — {len(desc)} chars"
                         elif result == ():
                             with get_session() as session:
@@ -341,6 +357,38 @@ async def run_enrich(req: EnrichRequest):
         except Exception as e:
             yield f"✗ Enrich failed: {str(e)[:120]}"
         yield f"✓ Enriched {updated}/{len(to_enrich)} jobs"
+
+        if req.rescore_llm and enriched_ids:
+            from analyzer.scorer import llm_score, load_cv_text
+            from db.models import JobStatus
+            yield f"→ LLM scoring {len(enriched_ids)} newly enriched jobs..."
+            try:
+                cv_text = load_cv_text(direction=req.direction or None)
+            except FileNotFoundError as e:
+                yield f"✗ CV not found: {e}"
+                return
+            scored = 0
+            for job_id in enriched_ids:
+                try:
+                    with get_session() as session:
+                        job = session.get(Job, job_id)
+                        if not job:
+                            continue
+                        title, desc = job.title, job.description or ""
+                    result = await llm_score(cv_text, title, desc)
+                    with get_session() as session:
+                        job = session.get(Job, job_id)
+                        if job:
+                            job.match_score = result.score
+                            if result.score < 0.1:
+                                job.status = JobStatus.ARCHIVED
+                            elif result.score >= 0.6:
+                                job.status = JobStatus.SHORTLISTED
+                    scored += 1
+                    yield f"  🧠 job #{job_id} — {round(result.score * 100)}%"
+                except Exception as e:
+                    yield f"  ✗ job #{job_id} score error: {str(e)[:80]}"
+            yield f"✓ LLM scored {scored}/{len(enriched_ids)} jobs"
     return await sse(gen())
 
 

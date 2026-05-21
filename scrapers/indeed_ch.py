@@ -22,7 +22,7 @@ class IndeedChScraper(BaseScraper):
         for page_num in range(max_pages):
             params = {
                 "q": keyword,
-                "l": location,
+                "l": location or "Switzerland",
                 "fromage": 30,
                 "sort": "date",
                 "start": page_num * 10,

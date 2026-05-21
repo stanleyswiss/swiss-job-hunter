@@ -24,7 +24,9 @@ class ZuriJobsScraper(BaseScraper):
         self, keyword: str, location: str = "Zürich", max_pages: int = 5
     ) -> AsyncGenerator[ScrapedJob, None]:
         for page in range(1, max_pages + 1):
-            params: dict = {"q": keyword, "l": location}
+            params: dict = {"q": keyword}
+            if location:
+                params["l"] = location
             if page > 1:
                 params["page"] = page
             url = f"{_SEARCH_URL}?{urlencode(params)}"
