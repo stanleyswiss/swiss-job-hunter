@@ -175,6 +175,7 @@ class SearchRequest(BaseModel):
     pages: int = 3
     semantic: bool = False
     direction: Optional[str] = None
+    linkedin_time_range: str = "r604800"  # r86400=24h | r604800=7d | r2592000=30d
 
 
 @app.post("/run/search")
@@ -201,7 +202,10 @@ async def run_search(req: SearchRequest):
 
             found_count = 0
             try:
-                async with scraper_cls() as scraper:
+                kwargs = {}
+                if source_name == "linkedin.com":
+                    kwargs["time_range"] = req.linkedin_time_range
+                async with scraper_cls(**kwargs) as scraper:
                     async for scraped in scraper.scrape(req.keyword, req.location, req.pages):
                         found_count += 1
                         try:
@@ -435,7 +439,7 @@ async def run_purge_archived(req: PurgeRequest):
                 .filter(
                     Job.status.in_(_purgeable),
                     Job.match_score.isnot(None),
-                    Job.match_score <= req.max_score,
+                    Job.match_score < req.max_score,
                 )
                 .order_by(Job.match_score.asc())
                 .all()
@@ -443,7 +447,7 @@ async def run_purge_archived(req: PurgeRequest):
             job_data = [(j.id, j.title, j.match_score, j.status.value) for j in jobs]
 
         mode = "DRY RUN" if req.dry_run else "DELETE"
-        yield f"[{mode}] {len(job_data)} jobs (new/analyzed/archived) with score ≤ {req.max_score:.0%}"
+        yield f"[{mode}] {len(job_data)} jobs (new/analyzed/archived) with score < {req.max_score:.0%}"
 
         deleted = 0
         for job_id, title, score, status in job_data:

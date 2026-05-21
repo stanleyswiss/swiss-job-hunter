@@ -425,6 +425,8 @@ export default function App() {
   const [coverLetter, setCoverLetter] = useState("");
   const [coverLang, setCoverLang] = useState("en");
   const [archiveBelow, setArchiveBelow] = useState(10); // percent
+  const [searchPages, setSearchPages] = useState(3);
+  const [linkedinTimeRange, setLinkedinTimeRange] = useState("r604800");
   const [purgeBelow, setPurgeBelow] = useState(10); // percent
   const [direction, setDirection] = useState("all");
   const [mainTab, setMainTab] = useState("board");   // board | tracker
@@ -682,8 +684,13 @@ export default function App() {
                   </div>
                   <input value={searchKw} onChange={e=>setSearchKw(e.target.value)}
                     placeholder="keyword" style={{...inp,marginBottom:5}}/>
-                  <input value={searchLoc} onChange={e=>setSearchLoc(e.target.value)}
-                    placeholder="location" style={{...inp,marginBottom:7}}/>
+                  <div style={{display:"flex",gap:5,marginBottom:7}}>
+                    <input value={searchLoc} onChange={e=>setSearchLoc(e.target.value)}
+                      placeholder="location" style={{...inp,flex:1}}/>
+                    <input type="number" min={1} max={40} value={searchPages}
+                      onChange={e=>setSearchPages(Math.max(1,parseInt(e.target.value)||1))}
+                      title="pages per source" style={{...inp,width:44,textAlign:"center"}}/>
+                  </div>
                   <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:8}}>
                     <button onClick={()=>setSearchSrc(searchSrc.length===SOURCES.length?[]:SOURCES)} style={{
                       fontSize:8,padding:"2px 6px",borderRadius:3,border:"1px solid",
@@ -702,7 +709,15 @@ export default function App() {
                       }}>{s.replace(/\.(ch|com)/,"")}</button>
                     ))}
                   </div>
-                  <Btn onClick={()=>runStream("run/search",{keyword:searchKw,location:searchLoc,sources:searchSrc,pages:3,semantic:false,direction:direction==="all"?null:direction},"search")}
+                  {searchSrc.includes("linkedin.com") && (
+                    <select value={linkedinTimeRange} onChange={e=>setLinkedinTimeRange(e.target.value)}
+                      style={{...inp,marginBottom:0,fontSize:9,color:"#4a6a58"}}>
+                      <option value="r86400">LinkedIn · 24h</option>
+                      <option value="r604800">LinkedIn · 7 days</option>
+                      <option value="r2592000">LinkedIn · 30 days</option>
+                    </select>
+                  )}
+                  <Btn onClick={()=>runStream("run/search",{keyword:searchKw,location:searchLoc,sources:searchSrc,pages:searchPages,semantic:false,direction:direction==="all"?null:direction,linkedin_time_range:linkedinTimeRange},"search")}
                     loading={loading.search} label="RUN SEARCH" icon="⬇" color="#2e7d52"/>
                 </div>
 
