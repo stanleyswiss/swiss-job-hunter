@@ -86,6 +86,7 @@ class Job(Base):
     status: Mapped[str] = mapped_column(Enum(JobStatus), default=JobStatus.NEW, index=True)
     match_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     match_explanation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    user_stars: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 1-5, manual interest rating
 
     # Tracking timestamps
     viewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

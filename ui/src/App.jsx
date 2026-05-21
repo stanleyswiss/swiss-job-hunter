@@ -49,6 +49,31 @@ const ADDABLE_EVENTS = [
 
 // ── Tiny components ───────────────────────────────────────────────────────────
 
+function Stars({ stars, jobId, onUpdate }) {
+  const [hovered, setHovered] = useState(null);
+  const current = hovered ?? stars ?? 0;
+  return (
+    <span style={{display:"inline-flex",gap:1,lineHeight:1}}>
+      {[1,2,3,4,5].map(n => (
+        <span key={n}
+          onClick={async e => {
+            e.stopPropagation();
+            const next = n === stars ? 0 : n;
+            await fetch(`${API}/jobs/${jobId}/stars`, {
+              method:"PATCH", headers:{"Content-Type":"application/json"},
+              body: JSON.stringify({stars: next}),
+            });
+            onUpdate();
+          }}
+          onMouseEnter={() => setHovered(n)}
+          onMouseLeave={() => setHovered(null)}
+          style={{cursor:"pointer", fontSize:14, color: n <= current ? "#f59e0b" : "#d4dece",
+            transition:"color 0.1s"}}>★</span>
+      ))}
+    </span>
+  );
+}
+
 function ScoreBar({ score }) {
   if (score == null) return <span style={{color:"#6b8c7a",fontSize:11}}>—</span>;
   const pct = Math.round(score * 100);
@@ -423,6 +448,7 @@ export default function App() {
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterText, setFilterText] = useState("");
   const [filterMinScore, setFilterMinScore] = useState(0);
+  const [filterMinStars, setFilterMinStars] = useState(0);
   const [coverLetter, setCoverLetter] = useState("");
   const [coverLang, setCoverLang] = useState("en");
   const [archiveBelow, setArchiveBelow] = useState(10); // percent
@@ -446,13 +472,13 @@ export default function App() {
 
   const fetchJobs = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/jobs?status=${filterStatus}&q=${encodeURIComponent(filterText)}&direction=${direction}`);
+      const r = await fetch(`${API}/jobs?status=${filterStatus}&q=${encodeURIComponent(filterText)}&direction=${direction}&min_stars=${filterMinStars}`);
       if (r.ok) { setJobs(await r.json()); setBackendOk(true); }
     } catch {
       if (backendOk) addLog("✗ Backend offline — run: python server.py");
       setBackendOk(false);
     }
-  }, [filterStatus, filterText, direction, addLog, backendOk]);
+  }, [filterStatus, filterText, direction, filterMinStars, addLog, backendOk]);
 
   const fetchStats = useCallback(async () => {
     try { const r=await fetch(`${API}/stats?threshold=${filterMinScore/100}`); if(r.ok) setStats(await r.json()); } catch {}
@@ -816,7 +842,7 @@ export default function App() {
                       }}>{s.toUpperCase()}</button>
                     ))}
                   </div>
-                  <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                  <div style={{display:"flex",gap:5,alignItems:"center",marginBottom:4}}>
                     <input value={filterText} onChange={e=>setFilterText(e.target.value)}
                       placeholder="search title / company..." style={{...inp,fontSize:10,flex:1}}/>
                     <div style={{display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
@@ -830,6 +856,18 @@ export default function App() {
                         background:"transparent",color:"#6b8c7a",cursor:"pointer",fontFamily:"monospace",
                       }}>✕</button>}
                     </div>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:4}}>
+                    <span style={{fontSize:9,color:"#5a7a68",fontFamily:"monospace"}}>★≥</span>
+                    {[0,1,2,3,4,5].map(n=>(
+                      <button key={n} onClick={()=>setFilterMinStars(n)} style={{
+                        fontSize:n===0?9:12, padding:"1px 5px", borderRadius:3, border:"1px solid",
+                        borderColor:filterMinStars===n?"#f59e0b40":"#d4dece",
+                        background:filterMinStars===n?"#f59e0b15":"transparent",
+                        color:filterMinStars===n?"#f59e0b":"#6b8c7a",
+                        cursor:"pointer", fontFamily:"monospace", fontWeight:700, lineHeight:1,
+                      }}>{n===0?"ALL":"★".repeat(n)}</button>
+                    ))}
                   </div>
                 </div>
 
@@ -867,7 +905,7 @@ export default function App() {
                         style={{
                           padding:"9px 14px",borderBottom:"1px solid #e8ede4",
                           borderLeft:"2px solid transparent",
-                          display:"grid",gridTemplateColumns:"26px 1fr 100px 66px 52px 18px",
+                          display:"grid",gridTemplateColumns:"26px 1fr 100px 66px 70px 52px 18px",
                           alignItems:"center",gap:8,cursor:"pointer",transition:"background 0.1s",
                         }}>
                         <span style={{fontSize:9,color:"#6b8c7a",fontWeight:700}}>#{j.id}</span>
@@ -879,7 +917,10 @@ export default function App() {
                           </div>
                         </div>
                         <Badge status={j.status}/>
-                        <ScoreBar score={j.match_score}/>
+                        <div style={{display:"flex",flexDirection:"column",gap:2,alignItems:"flex-end"}}>
+                          <ScoreBar score={j.match_score}/>
+                          {j.user_stars && <Stars stars={j.user_stars} jobId={j.id} onUpdate={()=>{fetchJobs();fetchStats();}}/>}
+                        </div>
                         <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2}}>
                           {j.direction&&<span style={{fontSize:7,fontFamily:"monospace",fontWeight:700,
                             color:"#fff",background:"#2e7d52",padding:"1px 4px",borderRadius:2,letterSpacing:"0.06em"}}>
@@ -908,6 +949,7 @@ export default function App() {
                 flexDirection:"column",background:"#f0f3ed",flexShrink:0}}>
                 <div style={{display:"flex",borderBottom:"1px solid #d4dece",flexShrink:0}}>
                   <RTab id="detail" label="DETAIL"/>
+                  <RTab id="company" label="COMPANY"/>
                   <RTab id="timeline" label="TIMELINE"/>
                   <RTab id="apply" label="APPLY"/>
                 </div>
@@ -924,28 +966,17 @@ export default function App() {
                           <div style={{fontSize:14,fontWeight:700,color:"#1a2e20",marginBottom:5,lineHeight:1.3}}>
                             {selected.title}
                           </div>
-                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
                             <span style={{fontSize:11,color:"#4a7a60"}}>
                               {selected.company} · {selected.location}
                             </span>
-                            {companyCache[selected.company] === null && !lookingUpCompany && (
-                              <button onClick={()=>triggerCompanyLookup(selected.company)} style={{
-                                fontSize:8,padding:"1px 6px",borderRadius:3,
-                                border:"1px solid #2e7d5230",background:"#2e7d5210",
-                                color:"#2e7d52",cursor:"pointer",fontFamily:"monospace",fontWeight:700,
-                              }}>🔍 lookup</button>
-                            )}
-                            {lookingUpCompany && <span style={{fontSize:8,color:"#6b8c7a",fontFamily:"monospace"}}>⟳</span>}
                           </div>
-                          {companyCache[selected.company] && (
-                            <div style={{
-                              fontSize:10,color:"#4a7a60",lineHeight:1.6,
-                              background:"#e2e8dc",borderRadius:5,padding:"8px 10px",
-                              border:"1px solid #d4dece",marginBottom:8,
-                            }}>
-                              {companyCache[selected.company]}
-                            </div>
-                          )}
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                            <Stars stars={selected.user_stars} jobId={selected.id} onUpdate={()=>{fetchJobs();fetchStats();}}/>
+                            <span style={{fontSize:9,color:"#6b8c7a",fontFamily:"monospace"}}>
+                              {selected.user_stars ? `${selected.user_stars}/5` : "rate this job"}
+                            </span>
+                          </div>
                           <div style={{display:"flex",gap:7,flexWrap:"wrap",alignItems:"center"}}>
                             <Badge status={selected.status}/>
                             {selected.employment_type&&<span style={{fontSize:9,color:"#5a7a68",background:"#d4dece",padding:"2px 6px",borderRadius:3}}>{selected.employment_type}</span>}
@@ -1018,6 +1049,48 @@ export default function App() {
                             ))}
                           </div>
                         </div>
+                      </>
+                    }
+                  </div>
+                )}
+
+                {/* COMPANY TAB */}
+                {rightTab==="company" && (
+                  <div style={{flex:1,overflowY:"auto",padding:18}}>
+                    {!selected
+                      ? <div style={{color:"#d4dece",fontSize:12,textAlign:"center",marginTop:50}}>← select a job</div>
+                      : <>
+                        <div style={{fontSize:14,fontWeight:700,color:"#1a2e20",marginBottom:3}}>
+                          {selected.company}
+                        </div>
+                        <div style={{fontSize:10,color:"#6b8c7a",marginBottom:16}}>
+                          {selected.location}
+                        </div>
+                        {companyCache[selected.company]
+                          ? <div style={{
+                              fontSize:11,color:"#2a3e2a",lineHeight:1.8,
+                              whiteSpace:"pre-wrap",
+                            }}>
+                              {companyCache[selected.company]}
+                            </div>
+                          : <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,marginTop:40}}>
+                              {companyCache[selected.company] === null
+                                ? <>
+                                    <span style={{fontSize:11,color:"#6b8c7a"}}>No info cached yet.</span>
+                                    <button onClick={()=>triggerCompanyLookup(selected.company)}
+                                      disabled={lookingUpCompany}
+                                      style={{
+                                        padding:"6px 14px",borderRadius:4,border:"1px solid #2e7d5235",
+                                        background:"#2e7d520d",color:"#2e7d52",fontSize:11,
+                                        fontWeight:700,fontFamily:"monospace",cursor:"pointer",
+                                      }}>
+                                      {lookingUpCompany ? "⟳ Looking up…" : "🔍 Lookup company"}
+                                    </button>
+                                  </>
+                                : <span style={{fontSize:11,color:"#6b8c7a",fontFamily:"monospace"}}>⟳ loading…</span>
+                              }
+                            </div>
+                        }
                       </>
                     }
                   </div>

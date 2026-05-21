@@ -25,7 +25,7 @@ Swiss Job Hunter automates the boring parts:
 - Scores each job against your CV (fast keyword match + LLM deep analysis)
 - Generates tailored cover letters via Claude / DeepSeek
 - Tracks every application with a Kanban board and event timeline
-- Supports multiple job directions (e.g. ML Engineer + Perception Engineer) with separate CVs
+- Supports multiple job directions (e.g. Agent Engineer + Perception Engineer) with separate CVs
 
 ---
 
@@ -33,16 +33,18 @@ Swiss Job Hunter automates the boring parts:
 
 | | Feature |
 |---|---|
-| ⬇ | **Multi-source scraping** — 8 Swiss job boards, httpx + Playwright |
+| ⬇ | **Multi-source scraping** — 8 Swiss job boards, httpx + Playwright; search Switzerland-wide or by city |
 | 🔁 | **Smart deduplication** — SHA-256 exact match + MiniLM semantic similarity |
 | 📄 | **Full JD enrichment** — fetches complete descriptions beyond preview snippets |
 | ⭐ | **CV matching** — weighted keyword scoring + LLM deep analysis (Claude / DeepSeek) |
-| 🎯 | **Direction tagging** — separate directions (e.g. ML / Perception) with independent CVs |
+| 🎯 | **Direction tagging** — auto-detected from `data/cv_*.txt` files; each direction uses its own CV |
 | 🏢 | **Company lookup** — LLM-generated company summaries, cached per company |
 | ✍ | **Cover letter generation** — personalized EN/DE letters via Claude API |
 | 🌐 | **Description translation** — translate JDs to English on demand |
 | 📋 | **Kanban tracker** — NEW → Viewed → Applied → Interview → Offer |
 | 🕐 | **Timeline** — per-job event log (recruiter calls, interviews, offers, rejections) |
+| ★ | **Star rating** — manual 1–5 star interest rating per job, filterable in the board |
+| 🔢 | **Score threshold filter** — show and count only jobs at or above a match-score percentage |
 | 🗑 | **Bulk purge** — preview and delete low-scoring jobs by threshold |
 | ⌨ | **CLI** — full terminal interface for power users |
 
@@ -83,9 +85,19 @@ LLM_PROVIDER=auto              # auto = use whichever key is configured
 
 ### 3. Add your CV
 
+Place one or more CV text files in `data/` using the naming convention `cv_{direction}.txt`.
+Each file defines a search direction; the backend auto-detects them at startup.
+
 ```bash
-cp your_cv.txt data/cv.txt
+# Single direction
+cp your_cv.txt data/cv_agent.txt
+
+# Multiple directions (different roles → different CVs)
+cp your_agent_cv.txt     data/cv_agent.txt
+cp your_perception_cv.txt data/cv_perception.txt
 ```
+
+The `data/cv.txt` file is used as a fallback when no direction is specified.
 
 ### 4. Start
 
@@ -109,20 +121,25 @@ The sidebar guides you through the full pipeline:
 ① SEARCH → ② PIPELINE (Enrich → Score → Company Lookup → Purge) → FILTER → LOG
 ```
 
-**① SEARCH** — Pick a direction (ALL / ML / PERCEPTION), set keyword + location, select sources, hit RUN SEARCH. New jobs are tagged with the active direction.
+**① SEARCH** — Pick a direction (ALL / AGENT / PERCEPTION / …), keyword, and location (leave blank for all Switzerland). Select sources and hit **RUN SEARCH**. New jobs are tagged with the active direction.
 
 **② PIPELINE**
 - **ENRICH DESCRIPTIONS** — fetches full JDs for jobs that only have a preview snippet
+- **ENRICH + LLM SCORE** — enriches then immediately scores with LLM in one step
 - **SCORE (KEYWORD)** — fast TF-IDF-style match against your CV, no API cost
 - **SCORE (LLM)** — deep analysis via Claude/DeepSeek; auto-archives jobs below the threshold
 - **LOOKUP COMPANIES** — generates a short LLM summary for each company, cached
 - **PREVIEW / PURGE** — dry-run or delete scored jobs below a score threshold
 
-**FILTER** — filter by status (NEW / SHORTLISTED / APPLIED / …) and free-text search
+**FILTER** — filter by status (NEW / SHORTLISTED / APPLIED / …), minimum star rating (★–★★★★★), minimum match score (≥ N%), and free-text search
 
 **LOG** — live SSE output from every pipeline operation
 
-**BOARD** — job list with score bars, status badges, and direction tags; click a job to inspect, translate, generate a cover letter, or apply
+**BOARD** — job list with score bars, status badges, direction tags, and star ratings; click a job to open its detail panel with tabs:
+- **DETAIL** — full JD, match score, translate button
+- **COMPANY** — LLM-generated company summary (cached)
+- **TIMELINE** — per-job event log with manual note entry
+- **APPLY** — cover letter generation and email application
 
 **TRACKER** — Kanban board across all application stages
 
@@ -130,20 +147,20 @@ The sidebar guides you through the full pipeline:
 
 ## Multi-Direction Search
 
-If you're targeting multiple job types with different CVs:
+Target multiple job types with separate CVs — directions are auto-detected from files in `data/`:
 
 ```bash
-# One CV per direction — filename convention: data/cv_{direction}.txt
-cp your_ml_cv.txt      data/cv_ml.txt
+# Filename convention: data/cv_{direction}.txt
+cp your_agent_cv.txt      data/cv_agent.txt
 cp your_perception_cv.txt data/cv_perception.txt
 ```
 
-In the UI, select **ML** or **PERCEPTION** before searching or scoring. The system:
+Restart the backend and the new directions appear automatically in the UI dropdown. The system:
 - Tags scraped jobs with the active direction
-- Loads the matching CV automatically when scoring
+- Loads the matching CV automatically when scoring or generating cover letters
 - Lets you filter the job list by direction
 
-You can add more directions by placing additional `data/cv_{name}.txt` files and using the direction name in the UI. The `data/cv.txt` file is used as a fallback for the default (ALL) mode.
+Add as many directions as you like. The `data/cv.txt` file is used as a fallback in ALL mode.
 
 ---
 
@@ -151,7 +168,7 @@ You can add more directions by placing additional `data/cv_{name}.txt` files and
 
 ```bash
 # Scrape jobs
-sjh search "ML engineer" --location "Zürich" --source jobs.ch
+sjh search "AI Agent engineer" --location "Zürich" --source jobs.ch
 
 # Enrich with full descriptions
 sjh enrich --source jobs.ch
@@ -182,7 +199,7 @@ sjh digest
 | swissdevjobs.ch | HTML / BS4 | IT & software focused |
 | züri.jobs | JSON-LD + HTML | Zürich-focused |
 | efinancialcareers.ch | JSON + HTML | Finance & banking |
-| linkedin.com | RSS feed | Public feed, no login required |
+| linkedin.com | HTTP guest API | No login required; set `LINKEDIN_COOKIE` for more results |
 | michael-page.ch | HTML / BS4 | Executive & specialist roles |
 | indeed.ch | Playwright | JS-rendered; requires Chromium |
 

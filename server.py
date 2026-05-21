@@ -57,7 +57,7 @@ def get_config():
 
 # ── DB helpers ─────────────────────────────────────────────────────────────────
 
-def get_jobs_query(status: str = "all", q: str = "", direction: str = "all"):
+def get_jobs_query(status: str = "all", q: str = "", direction: str = "all", min_stars: int = 0):
     from db.session import get_session
     from db.models import Job
     from sqlalchemy import or_
@@ -76,7 +76,9 @@ def get_jobs_query(status: str = "all", q: str = "", direction: str = "all"):
                     Job.location.ilike(f"%{q}%"),
                 )
             )
-        jobs = query.order_by(Job.match_score.desc().nullslast(), Job.scraped_at.desc()).all()
+        if min_stars:
+            query = query.filter(Job.user_stars >= min_stars)
+        jobs = query.order_by(Job.user_stars.desc().nullslast(), Job.match_score.desc().nullslast(), Job.scraped_at.desc()).all()
         return [
             {
                 "id": j.id,
@@ -92,6 +94,7 @@ def get_jobs_query(status: str = "all", q: str = "", direction: str = "all"):
                 "status": j.status,
                 "match_score": j.match_score,
                 "match_explanation": j.match_explanation,
+                "user_stars": j.user_stars,
                 "direction": j.direction,
                 "posted_at": j.posted_at.isoformat() if j.posted_at else None,
                 "scraped_at": j.scraped_at.isoformat() if j.scraped_at else None,
@@ -103,10 +106,10 @@ def get_jobs_query(status: str = "all", q: str = "", direction: str = "all"):
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.get("/jobs")
-def list_jobs(status: str = "all", q: str = "", direction: str = "all"):
+def list_jobs(status: str = "all", q: str = "", direction: str = "all", min_stars: int = 0):
     from db.session import init_db
     init_db()
-    return get_jobs_query(status, q, direction)
+    return get_jobs_query(status, q, direction, min_stars)
 
 
 @app.get("/stats")
@@ -153,6 +156,21 @@ def delete_job(job_id: int):
         session.query(Application).filter(Application.job_id == job_id).delete()
         session.query(RawJob).filter(RawJob.canonical_id == job_id).delete()
         session.delete(job)
+    return {"ok": True}
+
+
+@app.patch("/jobs/{job_id}/stars")
+def update_stars(job_id: int, body: dict):
+    from db.session import get_session
+    from db.models import Job
+    stars = body.get("stars")
+    if stars is not None and stars not in (0, 1, 2, 3, 4, 5):
+        raise HTTPException(400, "stars must be 0-5 (0 = clear)")
+    with get_session() as session:
+        job = session.get(Job, job_id)
+        if not job:
+            raise HTTPException(404, "Job not found")
+        job.user_stars = None if stars == 0 else stars
     return {"ok": True}
 
 
