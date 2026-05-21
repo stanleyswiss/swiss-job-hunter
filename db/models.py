@@ -79,7 +79,7 @@ class Job(Base):
     skills_extracted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     posted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    # Direction tag (e.g. "ml", "perception") — links job to a specific CV
+    # Direction tag (e.g. "agent", "perception") — links job to a specific CV
     direction: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
 
     # Pipeline state

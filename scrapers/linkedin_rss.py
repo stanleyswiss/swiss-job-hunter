@@ -131,7 +131,7 @@ class LinkedInRssScraper(BaseScraper):
         canonical = f"https://www.linkedin.com/jobs/view/{job_id}/"
         try:
             resp = await self._fetch(api_url)
-            if resp.status_code == 404:
+            if resp.status_code in (404, 410):
                 return ()  # type: ignore
             soup = BeautifulSoup(resp.text, "lxml")
             el = soup.select_one(".show-more-less-html__markup") or soup.select_one(".description__text")

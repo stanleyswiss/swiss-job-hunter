@@ -154,7 +154,7 @@ class JobScout24Scraper(BaseScraper):
         )
         try:
             resp = await self._fetch(url)
-            if resp.status_code == 404:
+            if resp.status_code in (404, 410):
                 return ()  # type: ignore
             soup = BeautifulSoup(resp.text, "lxml")
             for script in soup.find_all("script"):

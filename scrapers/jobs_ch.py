@@ -127,7 +127,7 @@ class JobsChScraper(BaseScraper):
         url = f"https://www.jobs.ch/en/vacancies/detail/{job_id}/"
         try:
             resp = await self._fetch(url)
-            if resp.status_code == 404:
+            if resp.status_code in (404, 410):
                 return ()  # type: ignore  # job taken down
             soup = BeautifulSoup(resp.text, "lxml")
 

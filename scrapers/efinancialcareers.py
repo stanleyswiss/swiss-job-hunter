@@ -113,8 +113,9 @@ class EFinancialCareersScraper(BaseScraper):
             return None
         try:
             from bs4 import BeautifulSoup
-            resp = await self._fetch(job_url)
-            if resp.status_code == 404:
+            client = await self._get_client()
+            resp = await client.get(job_url)
+            if resp.status_code in (404, 410):
                 return ()  # type: ignore
             soup = BeautifulSoup(resp.text, "lxml")
 

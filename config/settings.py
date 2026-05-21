@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/jobs.db"
 
     # ── Search defaults ────────────────────────────────────────────────────────
+    default_keyword: str = "Agent"
     default_location: str = "Zürich"
     default_language: Literal["en", "de", "fr"] = "en"
     search_radius_km: int = 30

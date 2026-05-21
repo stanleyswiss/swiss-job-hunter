@@ -33,7 +33,7 @@ const EVENT_META = {
 
 const SOURCES = ["jobs.ch","jobscout24.ch","swissdevjobs.ch","jobup.ch","züri.jobs","efinancialcareers.ch","linkedin.com","michael-page.ch"];
 
-const DIRECTIONS = ["ml", "perception"];
+const DIRECTIONS_FALLBACK = ["agent", "perception"];
 
 const APPLY_METHODS = [
   { id: "email",    label: "Email",    icon: "📧" },
@@ -417,7 +417,7 @@ export default function App() {
   const [selected, setSelected] = useState(null);
   const [log, setLog] = useState([]);
   const [loading, setLoading] = useState({});
-  const [searchKw, setSearchKw] = useState("ML engineer");
+  const [searchKw, setSearchKw] = useState("Agent");
   const [searchLoc, setSearchLoc] = useState("Zürich");
   const [searchSrc, setSearchSrc] = useState(["jobs.ch"]);
   const [filterStatus, setFilterStatus] = useState("all");
@@ -430,6 +430,7 @@ export default function App() {
   const [linkedinTimeRange, setLinkedinTimeRange] = useState("r604800");
   const [purgeBelow, setPurgeBelow] = useState(10); // percent
   const [direction, setDirection] = useState("all");
+  const [directions, setDirections] = useState(DIRECTIONS_FALLBACK);
   const [mainTab, setMainTab] = useState("board");   // board | tracker
   const [rightTab, setRightTab] = useState("detail"); // detail | timeline | apply
   const [applyModal, setApplyModal] = useState(false);
@@ -458,6 +459,17 @@ export default function App() {
   }, [filterMinScore]);
 
   useEffect(() => { fetchJobs(); fetchStats(); }, [fetchJobs, fetchStats]);
+
+  useEffect(() => {
+    fetch(`${API}/config`).then(r=>r.ok?r.json():null).then(cfg=>{
+      if (!cfg) return;
+      setSearchKw(cfg.default_keyword || "Agent");
+      setSearchLoc(cfg.default_location || "Zürich");
+    }).catch(()=>{});
+    fetch(`${API}/directions`).then(r=>r.ok?r.json():null).then(dirs=>{
+      if (dirs && dirs.length) setDirections(dirs);
+    }).catch(()=>{});
+  }, []);
 
   // Select job → auto-mark viewed
   const translateDesc = async (job, target) => {
@@ -677,7 +689,7 @@ export default function App() {
                 <div style={{padding:"6px 10px",borderBottom:"1px solid #d4dece"}}>
                   <div style={{fontSize:9,color:"#5a7a68",letterSpacing:"0.12em",fontWeight:700,marginBottom:4}}>① SEARCH</div>
                   <div style={{display:"flex",gap:3,marginBottom:4}}>
-                    {["all",...DIRECTIONS].map(d=>(
+                    {["all",...directions].map(d=>(
                       <button key={d} onClick={()=>setDirection(d)} style={{
                         flex:1,fontSize:8,padding:"2px 0",borderRadius:3,border:"1px solid",
                         borderColor:direction===d?"#2e7d5240":"#d4dece",

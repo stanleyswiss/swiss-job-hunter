@@ -10,6 +10,7 @@ import json
 import sys
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import AsyncGenerator, Optional
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -30,6 +31,28 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+
+@app.get("/directions")
+def get_directions():
+    import glob
+    from config.settings import settings
+    pattern = str(settings.cv_text_path.parent / "cv_*.txt")
+    dirs = sorted(
+        Path(p).stem[3:]  # strip leading "cv_"
+        for p in glob.glob(pattern)
+    )
+    return dirs
+
+
+@app.get("/config")
+def get_config():
+    from config.settings import Settings
+    s = Settings()
+    return {
+        "default_keyword": s.default_keyword,
+        "default_location": s.default_location,
+    }
 
 
 # ── DB helpers ─────────────────────────────────────────────────────────────────
@@ -273,7 +296,7 @@ async def run_enrich(req: EnrichRequest):
                 .filter(
                     (Job.description == None) |  # noqa: E711
                     (Job.description == "") |
-                    (func.length(Job.description) < 1500)
+                    (func.length(Job.description) < 100)
                 )
                 .order_by(Job.scraped_at.desc())
                 .limit(req.limit)
@@ -300,7 +323,7 @@ async def run_enrich(req: EnrichRequest):
                 if sjid:
                     job_data.append((j.id, sjid, dlen))
 
-        to_enrich = [(jid, sjid) for jid, sjid, dlen in job_data if dlen < 1500]
+        to_enrich = [(jid, sjid) for jid, sjid, dlen in job_data if dlen < 100]
         yield f"Enriching {len(to_enrich)} jobs from {req.source}..."
 
         # Generic enrich — works for any scraper that implements fetch_full_description
@@ -374,6 +397,8 @@ async def run_enrich(req: EnrichRequest):
                         job = session.get(Job, job_id)
                         if not job:
                             continue
+                        if job.match_score is not None:
+                            continue  # already scored, skip
                         title, desc = job.title, job.description or ""
                     result = await llm_score(cv_text, title, desc)
                     with get_session() as session:
