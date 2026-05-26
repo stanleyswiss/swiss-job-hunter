@@ -442,11 +442,14 @@ class AnalyzeRequest(BaseModel):
     skip_scored: bool = True
     archive_below: float = 0.1  # auto-archive jobs scoring below this (LLM mode only)
     direction: Optional[str] = None
+    concurrency: int = 10
 
 
 @app.post("/run/analyze")
 async def run_analyze(req: AnalyzeRequest):
     async def gen():
+        import asyncio
+        from asyncio import Queue
         from analyzer.scorer import fast_score, llm_score, load_cv_text
         from db.models import Job, JobStatus
         from db.session import get_session
@@ -458,53 +461,79 @@ async def run_analyze(req: AnalyzeRequest):
             return
 
         with get_session() as session:
-            query = (
-                session.query(Job)
-                .filter(Job.status.in_([JobStatus.NEW, JobStatus.ANALYZED, JobStatus.SHORTLISTED, JobStatus.VIEWED]))
-            )
+            statuses = list(JobStatus)  # all statuses when rescoring
+            if req.skip_scored:
+                statuses = [JobStatus.NEW, JobStatus.ANALYZED, JobStatus.SHORTLISTED, JobStatus.VIEWED]
+            query = session.query(Job).filter(Job.status.in_(statuses))
             if req.direction:
                 query = query.filter(Job.direction == req.direction)
             if req.skip_scored:
                 query = query.filter(Job.match_score.is_(None))
-            jobs = query.order_by(Job.scraped_at.desc()).limit(req.limit).all()
+            lim = req.limit if req.skip_scored else 9999
+            jobs = query.order_by(Job.scraped_at.desc()).limit(lim).all()
             job_data = [(j.id, j.title, j.description) for j in jobs]
 
-        # LLM scoring is more conservative — use lower threshold
         threshold = req.min_score if not req.llm else min(req.min_score, 0.2)
-        yield f"Analyzing {len(job_data)} jobs (mode: {'LLM' if req.llm else 'keyword'})..."
+        yield f"Analyzing {len(job_data)} jobs (mode: {'LLM' if req.llm else 'keyword'}, concurrency: {req.concurrency if req.llm else 1})..."
         shortlisted = 0
 
-        for job_id, title, description in job_data:
-            try:
-                if req.llm:
-                    result = await llm_score(cv_text, title, description or "")
-                else:
+        if req.llm:
+            queue: Queue = Queue()
+            sem = asyncio.Semaphore(req.concurrency)
+            completed = 0
+            total = len(job_data)
+
+            async def score_one(job_id: int, title: str, description: str) -> None:
+                nonlocal shortlisted, completed
+                async with sem:
+                    try:
+                        result = await llm_score(cv_text, title, description or "")
+                        with get_session() as session:
+                            job = session.get(Job, job_id)
+                            if job:
+                                job.match_score = result.score
+                                job.match_explanation = result.explanation
+                                if result.score >= threshold:
+                                    job.status = JobStatus.SHORTLISTED
+                                    shortlisted += 1
+                                elif result.score < req.archive_below:
+                                    job.status = JobStatus.ARCHIVED
+                                else:
+                                    job.status = JobStatus.ANALYZED
+                        score_pct = f"{result.score:.0%}"
+                        icon = "⭐" if result.score >= req.min_score else ("✗" if result.score < req.archive_below else "·")
+                        await queue.put(f"{icon} #{job_id} {score_pct} — {title[:45]}")
+                    except Exception as e:
+                        await queue.put(f"✗ #{job_id} error: {e}")
+                    finally:
+                        completed += 1
+                        if completed == total:
+                            await queue.put(None)  # sentinel
+
+            tasks = [asyncio.create_task(score_one(jid, t, d)) for jid, t, d in job_data]
+            while True:
+                msg = await queue.get()
+                if msg is None:
+                    break
+                yield msg
+            await asyncio.gather(*tasks)
+        else:
+            for job_id, title, description in job_data:
+                try:
                     result = fast_score(cv_text, description or "")
-
-                with get_session() as session:
-                    job = session.get(Job, job_id)
-                    if job:
-                        job.match_score = result.score
-                        job.match_explanation = result.explanation
-                        if result.score >= threshold:
-                            job.status = JobStatus.SHORTLISTED
-                            shortlisted += 1
-                        elif req.llm and result.score < req.archive_below:
-                            job.status = JobStatus.ARCHIVED
-                        else:
-                            job.status = JobStatus.ANALYZED
-
-                score_pct = f"{result.score:.0%}"
-                if result.score >= req.min_score:
-                    icon = "⭐"
-                elif req.llm and result.score < req.archive_below:
-                    icon = "✗"
-                else:
-                    icon = "·"
-                yield f"{icon} #{job_id} {score_pct} — {title[:45]}"
-
-            except Exception as e:
-                yield f"✗ #{job_id} error: {e}"
+                    with get_session() as session:
+                        job = session.get(Job, job_id)
+                        if job:
+                            job.match_score = result.score
+                            job.match_explanation = result.explanation
+                            job.status = JobStatus.SHORTLISTED if result.score >= threshold else JobStatus.ANALYZED
+                            if result.score >= threshold:
+                                shortlisted += 1
+                    score_pct = f"{result.score:.0%}"
+                    icon = "⭐" if result.score >= req.min_score else "·"
+                    yield f"{icon} #{job_id} {score_pct} — {title[:45]}"
+                except Exception as e:
+                    yield f"✗ #{job_id} error: {e}"
 
         yield f"✓ Done — {shortlisted}/{len(job_data)} shortlisted"
     return await sse(gen())

@@ -162,12 +162,15 @@ def analyze(
     limit: int = typer.Option(100, "--limit", "-n", help="Max jobs to analyze"),
     llm: bool = typer.Option(False, "--llm", help="Use LLM scoring (slower, more accurate)"),
     min_score: float = typer.Option(0.3, "--min-score", help="Min score to shortlist"),
+    rescore: bool = typer.Option(False, "--rescore", help="Re-score all jobs regardless of status"),
+    concurrency: int = typer.Option(10, "--concurrency", "-c", help="Parallel LLM workers"),
 ) -> None:
     """Score jobs against your CV and shortlist top matches."""
-    asyncio.run(_analyze(limit, llm, min_score))
+    asyncio.run(_analyze(limit, llm, min_score, rescore, concurrency))
 
 
-async def _analyze(limit: int, use_llm: bool, min_score: float) -> None:
+async def _analyze(limit: int, use_llm: bool, min_score: float, rescore: bool, concurrency: int) -> None:
+    import asyncio as _asyncio
     from analyzer.scorer import fast_score, llm_score, load_cv_text
     from db.models import Job, JobStatus
     from db.session import get_session
@@ -179,32 +182,65 @@ async def _analyze(limit: int, use_llm: bool, min_score: float) -> None:
         raise typer.Exit(1)
 
     with get_session() as session:
-        jobs = (
-            session.query(Job)
-            .filter(Job.status == JobStatus.NEW)
-            .limit(limit)
-            .all()
+        q = session.query(Job.id, Job.title, Job.description, Job.status).filter(
+            Job.description.isnot(None),
+            Job.description != "",
         )
+        if not rescore:
+            q = q.filter(Job.status == JobStatus.NEW).limit(limit)
+        rows = q.all()
 
-    console.print(f"Analyzing [cyan]{len(jobs)}[/cyan] jobs...")
+    # rows: list of (id, title, description, status)
+    if rescore:
+        rows = [(jid, t, d, st) for jid, t, d, st in rows if len(d or "") >= 200]
+
+    console.print(f"Analyzing [cyan]{len(rows)}[/cyan] jobs"
+                  + (" (rescore all)" if rescore else "") + "...")
     shortlisted = 0
+    completed = 0
+    total = len(rows)
 
-    for job in jobs:
-        if use_llm:
-            result = await llm_score(cv_text, job.title, job.description)
-        else:
-            result = fast_score(cv_text, job.description)
+    if use_llm and rescore:
+        sem = _asyncio.Semaphore(concurrency)
 
-        with get_session() as session:
-            j = session.get(Job, job.id)
-            if j:
-                j.match_score = result.score
-                j.match_explanation = result.explanation
-                j.status = (
-                    JobStatus.SHORTLISTED if result.score >= min_score else JobStatus.ANALYZED
-                )
-                if result.score >= min_score:
-                    shortlisted += 1
+        async def score_one(jid: int, title: str, description: str, old_status) -> None:
+            nonlocal shortlisted, completed
+            async with sem:
+                result = await llm_score(cv_text, title, description)
+            with get_session() as session:
+                j = session.get(Job, jid)
+                if j:
+                    j.match_score = result.score
+                    j.match_explanation = result.explanation
+                    # Preserve ARCHIVED/VIEWED; only promote NEW/ANALYZED
+                    if j.status in (JobStatus.NEW, JobStatus.ANALYZED):
+                        j.status = (
+                            JobStatus.SHORTLISTED if result.score >= min_score else JobStatus.ANALYZED
+                        )
+                    if result.score >= min_score:
+                        shortlisted += 1
+            completed += 1
+            if completed % 50 == 0 or completed == total:
+                console.print(f"  {completed}/{total} done...")
+
+        await _asyncio.gather(*[score_one(jid, t, d, st) for jid, t, d, st in rows])
+    else:
+        for jid, title, description, _ in rows:
+            if use_llm:
+                result = await llm_score(cv_text, title, description)
+            else:
+                result = fast_score(cv_text, description)
+
+            with get_session() as session:
+                j = session.get(Job, jid)
+                if j:
+                    j.match_score = result.score
+                    j.match_explanation = result.explanation
+                    j.status = (
+                        JobStatus.SHORTLISTED if result.score >= min_score else JobStatus.ANALYZED
+                    )
+                    if result.score >= min_score:
+                        shortlisted += 1
 
     console.print(f"✓ Done. [yellow]{shortlisted}[/yellow] jobs shortlisted (score ≥ {min_score:.0%})")
 

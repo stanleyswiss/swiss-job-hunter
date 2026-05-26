@@ -799,6 +799,9 @@ export default function App() {
                     <Btn onClick={()=>runStream("run/analyze",{limit:200,llm:true,archive_below:archiveBelow/100,direction:direction==="all"?null:direction},"analyze-llm")}
                       loading={loading["analyze-llm"]} label="SCORE (LLM)" icon="🧠"
                       color="#a78bfa" disabled={!stats.total}/>
+                    <Btn onClick={()=>runStream("run/analyze",{llm:true,skip_scored:false,archive_below:archiveBelow/100,concurrency:10,direction:direction==="all"?null:direction},"rescore-all")}
+                      loading={loading["rescore-all"]} label="RESCORE ALL" icon="🔄"
+                      color="#6366f1" disabled={!stats.total}/>
                     <div style={{display:"flex",alignItems:"center",gap:4,marginLeft:"auto"}}>
                       <span style={{fontSize:8,color:"#6b8c7a",fontFamily:"monospace",whiteSpace:"nowrap"}}>archive &lt;</span>
                       <input type="number" min={0} max={50} step={5} value={archiveBelow}
