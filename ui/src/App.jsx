@@ -831,10 +831,10 @@ export default function App() {
                     <input value={filterText} onChange={e=>setFilterText(e.target.value)}
                       placeholder="search title / company..." style={{...inp,fontSize:10,flex:1}}/>
                     <div style={{display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
-                      <span style={{fontSize:9,color:"#5a7a68",fontFamily:"monospace",whiteSpace:"nowrap"}}>threshold</span>
+                      <span style={{fontSize:9,color:"#5a7a68",fontFamily:"monospace",whiteSpace:"nowrap"}}>threshold ≥</span>
                       <input type="number" min={0} max={100} step={5} value={threshold}
                         onChange={e=>{const v=Math.max(0,Math.min(100,parseInt(e.target.value)||0));setThreshold(v);}}
-                        title="score threshold % — used by filter, archive, purge, lookup" style={{...inp,width:44,textAlign:"center",fontSize:10}}/>
+                        title="score threshold % — used by filter, archive, purge, lookup" style={{...inp,width:52,textAlign:"center",fontSize:10}}/>
                       <span style={{fontSize:9,color:"#5a7a68",fontFamily:"monospace"}}>%</span>
                     </div>
                   </div>
