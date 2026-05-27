@@ -20,6 +20,12 @@ _UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 _EMPLOYMENT_TYPES = re.compile(r"Festanstellung|Teilzeit|Vertrag|Contract|Freelance|Befristet")
+_CH_TERMS = re.compile(
+    r"schweiz|switzerland|zürich|zurich|geneva|genf|basel|bern|lausanne|zug|"
+    r"lugano|luzern|lucerne|winterthur|st\.?\s*gallen|aarau|schaffhausen|thun|"
+    r"\bch\b",
+    re.IGNORECASE,
+)
 
 
 class EFinancialCareersScraper(BaseScraper):
@@ -76,6 +82,10 @@ class EFinancialCareersScraper(BaseScraper):
             loc_el = await card.query_selector("[class*='location']")
             loc_raw = (await loc_el.inner_text()).strip() if loc_el else ""
             location = _EMPLOYMENT_TYPES.split(loc_raw)[0].strip().rstrip(",").strip()
+
+            # Skip non-Swiss jobs — efinancialcareers.ch is a global platform
+            if location and not _CH_TERMS.search(location):
+                return None
 
             # Company name is the line after "Speichern" in the card text
             full_text = (await card.inner_text()).strip()
