@@ -222,6 +222,7 @@ class SearchRequest(BaseModel):
     semantic: bool = False
     direction: Optional[str] = None
     linkedin_time_range: str = "r604800"  # r86400=24h | r604800=7d | r2592000=30d
+    linkedin_experience_level: str = "3,4"  # 2=Entry,3=Associate,4=Senior,5=Director
 
 
 @app.post("/run/search")
@@ -251,6 +252,7 @@ async def run_search(req: SearchRequest):
                 kwargs = {}
                 if source_name == "linkedin.com":
                     kwargs["time_range"] = req.linkedin_time_range
+                    kwargs["experience_level"] = req.linkedin_experience_level
                 async with scraper_cls(**kwargs) as scraper:
                     async for scraped in scraper.scrape(req.keyword, req.location, req.pages):
                         found_count += 1
@@ -441,6 +443,7 @@ class AnalyzeRequest(BaseModel):
     min_score: float = 0.3
     skip_scored: bool = True
     archive_below: float = 0.1  # auto-archive jobs scoring below this (LLM mode only)
+    min_keyword_score: float = 0.05  # skip LLM if keyword pre-filter score < this
     direction: Optional[str] = None
     concurrency: int = 10
 
@@ -450,7 +453,7 @@ async def run_analyze(req: AnalyzeRequest):
     async def gen():
         import asyncio
         from asyncio import Queue
-        from analyzer.scorer import fast_score, llm_score, load_cv_text
+        from analyzer.scorer import fast_score, llm_score, load_cv_text, load_cv_keywords
         from db.models import Job, JobStatus
         from db.session import get_session
 
@@ -478,31 +481,49 @@ async def run_analyze(req: AnalyzeRequest):
         shortlisted = 0
 
         if req.llm:
+            # Load dynamic CV keywords once for pre-filter (cached per CV file)
+            yield f"→ Loading CV keywords for pre-filter..."
+            cv_keywords = await load_cv_keywords(cv_text, direction=req.direction or None)
+            yield f"→ Loaded {len(cv_keywords)} keywords, pre-filter threshold: {req.min_keyword_score:.0%}"
+
             queue: Queue = Queue()
             sem = asyncio.Semaphore(req.concurrency)
             completed = 0
+            skipped = 0
             total = len(job_data)
 
             async def score_one(job_id: int, title: str, description: str) -> None:
-                nonlocal shortlisted, completed
+                nonlocal shortlisted, completed, skipped
                 async with sem:
                     try:
-                        result = await llm_score(cv_text, title, description or "")
-                        with get_session() as session:
-                            job = session.get(Job, job_id)
-                            if job:
-                                job.match_score = result.score
-                                job.match_explanation = result.explanation
-                                if result.score >= threshold:
-                                    job.status = JobStatus.SHORTLISTED
-                                    shortlisted += 1
-                                elif result.score < req.archive_below:
+                        # Keyword pre-filter: skip LLM if clearly irrelevant
+                        kw_result = fast_score(cv_text, description or "", compiled=cv_keywords)
+                        if kw_result.score < req.min_keyword_score:
+                            with get_session() as session:
+                                job = session.get(Job, job_id)
+                                if job:
+                                    job.match_score = kw_result.score
+                                    job.match_explanation = f"[keyword pre-filter] {kw_result.explanation}"
                                     job.status = JobStatus.ARCHIVED
-                                else:
-                                    job.status = JobStatus.ANALYZED
-                        score_pct = f"{result.score:.0%}"
-                        icon = "⭐" if result.score >= req.min_score else ("✗" if result.score < req.archive_below else "·")
-                        await queue.put(f"{icon} #{job_id} {score_pct} — {title[:45]}")
+                            skipped += 1
+                            await queue.put(f"– #{job_id} {kw_result.score:.0%} (skipped) — {title[:45]}")
+                        else:
+                            result = await llm_score(cv_text, title, description or "")
+                            with get_session() as session:
+                                job = session.get(Job, job_id)
+                                if job:
+                                    job.match_score = result.score
+                                    job.match_explanation = result.explanation
+                                    if result.score >= threshold:
+                                        job.status = JobStatus.SHORTLISTED
+                                        shortlisted += 1
+                                    elif result.score < req.archive_below:
+                                        job.status = JobStatus.ARCHIVED
+                                    else:
+                                        job.status = JobStatus.ANALYZED
+                            score_pct = f"{result.score:.0%}"
+                            icon = "⭐" if result.score >= req.min_score else ("✗" if result.score < req.archive_below else "·")
+                            await queue.put(f"{icon} #{job_id} {score_pct} — {title[:45]}")
                     except Exception as e:
                         await queue.put(f"✗ #{job_id} error: {e}")
                     finally:
@@ -517,6 +538,7 @@ async def run_analyze(req: AnalyzeRequest):
                     break
                 yield msg
             await asyncio.gather(*tasks)
+            yield f"→ Pre-filter skipped {skipped}/{total} jobs (saved ~{skipped} LLM calls)"
         else:
             for job_id, title, description in job_data:
                 try:

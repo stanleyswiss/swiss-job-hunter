@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -126,20 +127,128 @@ def _extract_weighted(text: str) -> dict[str, float]:
     return found
 
 
-def fast_score(cv_text: str, jd_text: str) -> MatchResult:
+def _compile_dynamic(raw: list[dict]) -> list[tuple[re.Pattern, float, str]]:
+    """Convert LLM-extracted keyword dicts to compiled pattern tuples."""
+    result = []
+    for item in raw:
+        kw = str(item.get("keyword", "")).strip()
+        if not kw:
+            continue
+        weight = float(item.get("weight", 1.0))
+        escaped = re.escape(kw)
+        pattern = re.compile(r'(?<!\w)' + escaped + r'(?!\w)', re.IGNORECASE)
+        result.append((pattern, weight, kw))
+    return result
+
+
+async def _extract_keywords_llm(cv_text: str) -> list[dict]:
+    """Call LLM once to extract skill keywords from CV. Returns list of {keyword, weight}."""
+    from llm.router import call_llm
+
+    system = "You are a technical recruiter extracting skills from a candidate CV."
+    user = f"""Extract all technical skills, tools, frameworks, and domain keywords from this CV.
+
+Assign weight based on how central the skill is to the candidate's profile:
+- 2.0: core expertise (used extensively, appears multiple times)
+- 1.5: solid secondary skill (used regularly)
+- 1.0: general/supporting skill (mentioned, familiar)
+
+Rules:
+- Use lowercase, simple terms that would literally appear in a job description
+- Include multi-word phrases (e.g. "autonomous driving", "computer vision")
+- Include abbreviations as separate entries (e.g. "bev", "adas", "mot")
+- 30-60 keywords total
+- Return ONLY valid JSON array, no markdown:
+
+[{{"keyword": "pytorch", "weight": 2.0}}, {{"keyword": "python", "weight": 1.5}}, ...]
+
+CV:
+{cv_text[:5000]}"""
+
+    raw, _ = await call_llm(user=user, system=system, max_tokens=1024)
+    raw = re.sub(r'^```[a-z]*\n?', '', raw.strip())
+    raw = re.sub(r'\n?```$', '', raw)
+    m = re.search(r'\[.*\]', raw, re.DOTALL)
+    if not m:
+        return []
+    try:
+        return json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return []
+
+
+async def load_cv_keywords(
+    cv_text: str,
+    direction: Optional[str] = None,
+    cv_path: Optional[Path] = None,
+) -> list[tuple[re.Pattern, float, str]]:
+    """
+    Load compiled keyword patterns for fast_score.
+    Cache stored at data/cv_keywords_{direction}.json, invalidated by CV mtime.
+    Falls back to hardcoded _COMPILED if extraction fails.
+    """
+    cache_key = direction or "default"
+    cache_file = Path(f"./data/cv_keywords_{cache_key}.json")
+
+    if cv_path is None:
+        try:
+            from config.settings import Settings
+            cv_path = Settings().cv_text_path
+        except Exception:
+            cv_path = None
+
+    cv_mtime = cv_path.stat().st_mtime if cv_path and cv_path.exists() else 0.0
+
+    if cache_file.exists():
+        try:
+            cached = json.loads(cache_file.read_text(encoding="utf-8"))
+            if abs(cached.get("cv_mtime", 0) - cv_mtime) < 1.0:
+                compiled = _compile_dynamic(cached["keywords"])
+                if compiled:
+                    return compiled
+        except Exception:
+            pass
+
+    keywords = await _extract_keywords_llm(cv_text)
+    if keywords:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(
+            json.dumps({"cv_mtime": cv_mtime, "keywords": keywords}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return _compile_dynamic(keywords)
+
+    return _COMPILED  # fallback to hardcoded list
+
+
+def fast_score(
+    cv_text: str,
+    jd_text: str,
+    compiled: Optional[list[tuple[re.Pattern, float, str]]] = None,
+) -> MatchResult:
     """
     Weighted keyword-overlap score.
     Score = sum(weights of matched skills) / sum(weights of all JD skills)
     Capped at 1.0.
+    Pass `compiled` to use dynamic CV-extracted keywords instead of hardcoded list.
     """
+    _patterns = compiled if compiled is not None else _COMPILED
+
     if not jd_text or len(jd_text.strip()) < 50:
         return MatchResult(
             score=0.0, matched_skills=[], missing_skills=[],
             explanation="JD too short — run Enrich first for better scoring.",
         )
 
-    cv_skills  = _extract_weighted(cv_text)
-    jd_skills  = _extract_weighted(jd_text)
+    def _extract(text: str) -> dict[str, float]:
+        found = {}
+        for pat, weight, label in _patterns:
+            if pat.search(text):
+                found[label] = weight
+        return found
+
+    cv_skills  = _extract(cv_text)
+    jd_skills  = _extract(jd_text)
 
     if not jd_skills:
         return MatchResult(
@@ -154,7 +263,6 @@ def fast_score(cv_text: str, jd_text: str) -> MatchResult:
     matched_weight   = sum(matched.values())
     score = min(matched_weight / total_jd_weight, 1.0)
 
-    # Sort by weight descending for display
     matched_list = sorted(matched, key=lambda k: -matched[k])
     missing_list = sorted(missing, key=lambda k: -missing[k])
 

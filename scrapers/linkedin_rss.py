@@ -27,9 +27,10 @@ LAST_30D = "r2592000"
 class LinkedInRssScraper(BaseScraper):
     source_name = "linkedin.com"
 
-    def __init__(self, time_range: str = LAST_7D) -> None:
+    def __init__(self, time_range: str = LAST_7D, experience_level: str = "3,4") -> None:
         super().__init__()
         self.time_range = time_range
+        self.experience_level = experience_level  # LinkedIn f_E: 2=Entry,3=Associate,4=Senior,5=Director
         # Re-read .env on every instantiation so cookie updates take effect immediately
         from config.settings import Settings
         _fresh = Settings()
@@ -54,6 +55,8 @@ class LinkedInRssScraper(BaseScraper):
                 "start": page_num * _PAGE_SIZE,
                 "count": _PAGE_SIZE,
             }
+            if self.experience_level:
+                params["f_E"] = self.experience_level
             url = f"{_GUEST_SEARCH}?{urlencode(params)}"
 
             try:

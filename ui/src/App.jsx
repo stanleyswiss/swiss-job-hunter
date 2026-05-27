@@ -453,6 +453,7 @@ export default function App() {
   const [threshold, setThreshold] = useState(10); // percent — shared by archive/purge/filter/lookup
   const [searchPages, setSearchPages] = useState(3);
   const [linkedinTimeRange, setLinkedinTimeRange] = useState("r604800");
+  const [linkedinExpLevel, setLinkedinExpLevel] = useState("3,4");
   const [direction, setDirection] = useState("all");
   const [directions, setDirections] = useState(DIRECTIONS_FALLBACK);
   const [mainTab, setMainTab] = useState("board");   // board | tracker
@@ -757,15 +758,22 @@ export default function App() {
                       }}>{s.replace(/\.(ch|com)/,"")}</button>
                     ))}
                   </div>
-                  {searchSrc.includes("linkedin.com") && (
+                  {searchSrc.includes("linkedin.com") && (<>
                     <select value={linkedinTimeRange} onChange={e=>setLinkedinTimeRange(e.target.value)}
                       style={{...inp,marginBottom:0,fontSize:9,color:"#4a6a58"}}>
                       <option value="r86400">LinkedIn · 24h</option>
                       <option value="r604800">LinkedIn · 7 days</option>
                       <option value="r2592000">LinkedIn · 30 days</option>
                     </select>
-                  )}
-                  <Btn onClick={()=>runStream("run/search",{keyword:searchKw,location:searchLoc,sources:searchSrc,pages:searchPages,semantic:false,direction:direction==="all"?null:direction,linkedin_time_range:linkedinTimeRange},"search")}
+                    <select value={linkedinExpLevel} onChange={e=>setLinkedinExpLevel(e.target.value)}
+                      style={{...inp,marginBottom:0,fontSize:9,color:"#4a6a58"}}>
+                      <option value="2,3,4">LinkedIn · Entry–Senior</option>
+                      <option value="3,4">LinkedIn · Associate–Senior</option>
+                      <option value="4">LinkedIn · Senior only</option>
+                      <option value="4,5">LinkedIn · Senior–Director</option>
+                    </select>
+                  </>)}
+                  <Btn onClick={()=>runStream("run/search",{keyword:searchKw,location:searchLoc,sources:searchSrc,pages:searchPages,semantic:false,direction:direction==="all"?null:direction,linkedin_time_range:linkedinTimeRange,linkedin_experience_level:linkedinExpLevel},"search")}
                     loading={loading.search} label="RUN SEARCH" icon="⬇" color="#2e7d52"/>
                 </div>
 
