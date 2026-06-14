@@ -348,5 +348,5 @@ If you use this code to provide a hosted service, you must release your modifica
 ---
 
 <div align="center">
-<sub>Built in Zürich · Swiss B Permit holder · Open to collaborations</sub>
+<sub>Built for job seekers in Switzerland · Contributions welcome</sub>
 </div>
