@@ -42,6 +42,7 @@ Swiss Job Hunter automates the boring parts:
 | 🔖 | **Batch keyword search** — tag-based input; type a keyword and press Enter or comma to add, Backspace to remove; all keywords searched in sequence across selected sources |
 | 🚀 | **One-click pipeline** — SEARCH + ENRICH + SCORE chains all three steps automatically, with LinkedIn cooldown between keywords |
 | 🏢 | **Company lookup** — LLM-generated company summaries, cached per company |
+| 📝 | **CV tailoring** — per-JD rewrite suggestions with ATS keyword gap analysis; heuristic JD section extraction strips boilerplate before passing to LLM |
 | ✍ | **Cover letter generation** — personalized EN/DE letters via Claude API |
 | 🌐 | **Description translation** — translate JDs to English on demand |
 | 📋 | **Kanban tracker** — NEW → Viewed → Considering → Applied → Interview → Offer |
@@ -128,7 +129,9 @@ The sidebar guides you through the full pipeline:
 
 Pick a direction (ALL / AGENT / PERCEPTION / …), then choose keywords and sources.
 
-- **Keyword presets** — click **⚡ PERCEPTION** or **⚡ AGENT** to instantly load a curated keyword group and switch to the matching direction. Presets cover the most effective search terms for each role type (e.g. `computer vision engineer`, `ADAS engineer`, `sensor fusion engineer`, `autonomous driving engineer`, `robotics engineer`, `perception engineer` for PERCEPTION).
+- **Keyword presets** — click **⚡ PERCEPTION** or **⚡ AGENT** to instantly load a curated keyword group and switch to the matching direction:
+  - **PERCEPTION**: `computer vision engineer`, `ADAS engineer`, `sensor fusion engineer`, `autonomous driving engineer`, `robotics engineer`, `perception engineer`, `SLAM engineer`, `robot perception engineer`, `motion planning engineer`, `autonomous systems engineer`, `robotics software engineer`
+  - **AGENT**: `machine learning engineer`, `AI engineer`, `deep learning engineer`, `LLM Application Engineer`, `agentic AI`, `GenAI engineer`, `MLOps engineer`, `AI software engineer`, `applied scientist`
 - **Batch keywords** — type a keyword and press **Enter** or **,** (comma) to add it as a tag; press **Backspace** to remove the last one. All keywords are searched in sequence across every selected source.
 - **Location** — leave blank for all Switzerland, or type a city. **ALL CH** button clears it.
 - **Pages** — number of pages to fetch per source per keyword.
@@ -158,10 +161,11 @@ The pipeline button is protected against double-clicks — a second click while 
 **LOG** — live SSE output from every pipeline operation; shows a pulsing **●** indicator while any operation is running, and per-source progress every 10 jobs fetched
 
 **BOARD** — job list with score bars, status badges, direction tags, and star ratings; click a job to open its detail panel with tabs:
-- **DETAIL** — full JD, match score, translate button
+- **DETAIL** — full JD, match score, translate button; click **TAILOR CV FOR THIS JD** to run ATS analysis
 - **COMPANY** — LLM-generated company summary (cached)
 - **TIMELINE** — per-job event log with manual note entry
 - **APPLY** — cover letter generation and email application
+- **TAILOR** — missing keywords (chips) + per-bullet rewrite suggestions (original → improved + reason); **REGENERATE** reruns the analysis
 
 **TRACKER** — Kanban board across all application stages
 
