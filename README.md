@@ -25,7 +25,7 @@ Job searching in Switzerland is fragmented — the same listing appears on jobs.
 Swiss Job Hunter automates the boring parts:
 - Scrapes 8 Swiss job boards and deduplicates across sources
 - Scores each job against your CV (fast keyword match + LLM deep analysis)
-- Generates tailored cover letters via Claude / DeepSeek
+- Generates tailored cover letters via Claude / DeepSeek / OpenRouter
 - Tracks every application with a Kanban board and event timeline
 - Supports multiple job directions (e.g. Agent Engineer + Perception Engineer) with separate CVs
 
@@ -61,7 +61,7 @@ Swiss Job Hunter automates the boring parts:
 ### Prerequisites
 - Python 3.11+
 - Node.js 18+
-- [Anthropic API key](https://console.anthropic.com) and/or [DeepSeek API key](https://platform.deepseek.com)
+- At least one LLM API key: [Anthropic](https://console.anthropic.com), [DeepSeek](https://platform.deepseek.com), or [OpenRouter](https://openrouter.ai/keys)
 
 ### 1. Clone & install
 
@@ -84,10 +84,16 @@ cp .env.example .env
 Edit `.env`:
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-...   # Claude API (cover letters, LLM scoring, company lookup)
-DEEPSEEK_API_KEY=sk-...        # DeepSeek — cheaper alternative for scoring
-LLM_PROVIDER=auto              # auto = use whichever key is configured
+ANTHROPIC_API_KEY=sk-ant-...   # Claude (cover letters, LLM scoring, company lookup)
+DEEPSEEK_API_KEY=sk-...        # DeepSeek — cheaper alternative
+OPENROUTER_API_KEY=sk-or-...   # OpenRouter — access 100+ models via one key
+OPENROUTER_MODEL=openai/gpt-4o-mini  # any model slug from openrouter.ai/models
+LLM_PROVIDER=auto              # auto | anthropic | deepseek | openrouter
 ```
+
+> **LLM routing** — `auto` round-robins between every provider whose key is set.
+> Pin to a single provider with `LLM_PROVIDER=openrouter` (or `anthropic` / `deepseek`).
+> Only one key is required; all three can coexist.
 
 ### 3. Add your CV
 
@@ -274,7 +280,7 @@ sjh digest
 | Scraping | `httpx`, `playwright`, `beautifulsoup4` |
 | Dedup | SHA-256 + `sentence-transformers` (MiniLM-L6) |
 | Storage | SQLite + SQLAlchemy 2.x |
-| LLM | Anthropic Claude + DeepSeek (OpenAI-compatible) |
+| LLM | Anthropic Claude, DeepSeek, OpenRouter (OpenAI-compatible) |
 | Backend | FastAPI + SSE streaming |
 | Frontend | React 18 + Vite |
 | CLI | Typer + Rich |
