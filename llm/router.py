@@ -1,7 +1,7 @@
 """
-LLM provider router — round-robin between Anthropic and DeepSeek.
+LLM provider router — round-robin between Anthropic, DeepSeek, and OpenRouter.
 
-DeepSeek is OpenAI-compatible, so we use the openai SDK for it.
+DeepSeek and OpenRouter are OpenAI-compatible, so we use the openai SDK for both.
 Anthropic uses its own SDK.
 
 Usage:
@@ -34,6 +34,8 @@ def _build_cycle() -> itertools.cycle:
         return itertools.cycle(["anthropic"])
     if settings.llm_provider == "deepseek":
         return itertools.cycle(["deepseek"])
+    if settings.llm_provider == "openrouter":
+        return itertools.cycle(["openrouter"])
 
     # "auto" — include only providers that have a key set
     available: list[str] = []
@@ -41,9 +43,14 @@ def _build_cycle() -> itertools.cycle:
         available.append("anthropic")
     if settings.deepseek_api_key:
         available.append("deepseek")
+    if settings.openrouter_api_key:
+        available.append("openrouter")
 
     if not available:
-        raise RuntimeError("No LLM provider configured. Set ANTHROPIC_API_KEY or DEEPSEEK_API_KEY.")
+        raise RuntimeError(
+            "No LLM provider configured. Set ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, "
+            "or OPENROUTER_API_KEY."
+        )
 
     return itertools.cycle(available)
 
@@ -91,6 +98,26 @@ async def _call_deepseek(system: str, user: str, max_tokens: int) -> str:
     return (response.choices[0].message.content or "").strip()
 
 
+# ── OpenRouter call (OpenAI-compatible) ───────────────────────────────────────
+
+async def _call_openrouter(system: str, user: str, max_tokens: int) -> str:
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(
+        api_key=settings.openrouter_api_key,
+        base_url=settings.openrouter_base_url,
+    )
+    response = await client.chat.completions.create(
+        model=settings.openrouter_model,
+        max_tokens=max_tokens,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    )
+    return (response.choices[0].message.content or "").strip()
+
+
 # ── Public interface ───────────────────────────────────────────────────────────
 
 async def call_llm(
@@ -111,6 +138,8 @@ async def call_llm(
         coro = _call_anthropic(system, user, max_tokens)
     elif p == "deepseek":
         coro = _call_deepseek(system, user, max_tokens)
+    elif p == "openrouter":
+        coro = _call_openrouter(system, user, max_tokens)
     else:
         raise ValueError(f"Unknown provider: {p}")
 
