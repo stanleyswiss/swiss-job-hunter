@@ -330,4 +330,6 @@ If you use this code to provide a hosted service, you must release your modifica
 
 <div align="center">
 <sub>Built for job seekers in Switzerland · Contributions welcome</sub>
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Donvink/swiss-job-hunter&type=Date)](https://star-history.com/#Donvink/swiss-job-hunter&Date)
 </div>
