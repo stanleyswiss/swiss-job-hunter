@@ -106,6 +106,10 @@ async def _call_openrouter(system: str, user: str, max_tokens: int) -> str:
     client = AsyncOpenAI(
         api_key=settings.openrouter_api_key,
         base_url=settings.openrouter_base_url,
+        default_headers={
+            "HTTP-Referer": "https://github.com/Donvink/swiss-job-hunter",
+            "X-Title": "Swiss Job Hunter",
+        },
     )
     response = await client.chat.completions.create(
         model=settings.openrouter_model,
