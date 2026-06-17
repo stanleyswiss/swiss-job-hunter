@@ -62,6 +62,7 @@ Swiss Job Hunter automates the boring parts:
 - Python 3.11+
 - Node.js 18+
 - At least one LLM API key: [Anthropic](https://console.anthropic.com), [DeepSeek](https://platform.deepseek.com), or [OpenRouter](https://openrouter.ai/keys)
+- Or use Ollama!
 
 ### 1. Clone & install
 
@@ -88,12 +89,14 @@ ANTHROPIC_API_KEY=sk-ant-...   # Claude (cover letters, LLM scoring, company loo
 DEEPSEEK_API_KEY=sk-...        # DeepSeek — cheaper alternative
 OPENROUTER_API_KEY=sk-or-...   # OpenRouter — access 100+ models via one key
 OPENROUTER_MODEL=openai/gpt-4o-mini  # any model slug from openrouter.ai/models
-LLM_PROVIDER=auto              # auto | anthropic | deepseek | openrouter
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_MODEL=qwen3.6:latest
+LLM_PROVIDER=auto              # auto | anthropic | deepseek | openrouter | ollama
 ```
 
 > **LLM routing** — `auto` round-robins between every provider whose key is set.
 > Pin to a single provider with `LLM_PROVIDER=openrouter` (or `anthropic` / `deepseek`).
-> Only one key is required; all three can coexist.
+> Only one key is required; all four can coexist.
 
 ### 3. Add your CV
 
