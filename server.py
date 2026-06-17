@@ -54,8 +54,15 @@ def get_config():
     return {
         "default_keyword": s.default_keyword,
         "default_location": s.default_location,
+        "keyword_presets": s.keyword_presets,
     }
 
+
+@app.get("/presets")
+def get_presets():
+    """Return keyword presets configured via KEYWORD_PRESETS in .env."""
+    from config.settings import Settings
+    return Settings().keyword_presets
 
 # ── DB helpers ─────────────────────────────────────────────────────────────────
 

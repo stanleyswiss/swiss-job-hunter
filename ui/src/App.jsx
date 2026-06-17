@@ -36,11 +36,6 @@ const SOURCES = ["jobs.ch","jobscout24.ch","swissdevjobs.ch","jobup.ch","züri.j
 
 const DIRECTIONS_FALLBACK = ["agent", "perception"];
 
-const KEYWORD_PRESETS = {
-  perception: ["computer vision engineer", "ADAS engineer", "sensor fusion engineer", "autonomous driving engineer", "robotics engineer", "perception engineer", "SLAM engineer", "robot perception engineer", "motion planning engineer", "autonomous systems engineer", "robotics software engineer"],
-  agent:      ["machine learning engineer", "AI engineer", "deep learning engineer", "LLM Application Engineer", "agentic AI", "GenAI engineer", "MLOps engineer", "AI software engineer", "applied scientist"],
-};
-
 const APPLY_METHODS = [
   { id: "email",    label: "Email",    icon: "📧" },
   { id: "form",     label: "Web Form", icon: "🌐" },
@@ -466,6 +461,7 @@ export default function App() {
   const [coverLang, setCoverLang] = useState("en");
   const [threshold, setThreshold] = useState(10); // percent — shared by archive/purge/filter/lookup
   const [searchPages, setSearchPages] = useState(3);
+  const [keywordPresets, setKeywordPresets] = useState({});
   const [linkedinTimeRange, setLinkedinTimeRange] = useState("r604800");
   const [linkedinExpLevel, setLinkedinExpLevel] = useState("3,4");
   const [direction, setDirection] = useState("all");
@@ -505,6 +501,12 @@ export default function App() {
       if (!cfg) return;
       setSearchKws([cfg.default_keyword || "Agent"]);
       setSearchLoc(cfg.default_location || "Zürich");
+      if (cfg.keyword_presets && typeof cfg.keyword_presets === "object") {
+        setKeywordPresets(cfg.keyword_presets);
+      }
+    }).catch(()=>{});
+    fetch(`${API}/presets`).then(r=>r.ok?r.json():null).then(presets=>{
+      if (presets && typeof presets === "object") setKeywordPresets(presets);
     }).catch(()=>{});
     fetch(`${API}/directions`).then(r=>r.ok?r.json():null).then(dirs=>{
       if (dirs && dirs.length) setDirections(dirs);
@@ -778,7 +780,7 @@ export default function App() {
                   </div>
                   {/* keyword presets */}
                   <div style={{display:"flex",gap:3,marginBottom:4}}>
-                    {Object.entries(KEYWORD_PRESETS).map(([dir, kws])=>(
+                    {Object.entries(keywordPresets).map(([dir, kws])=>(
                       <button key={dir} onClick={()=>{ setSearchKws(kws); setSearchKwInput(""); setDirection(dir); }} style={{
                         flex:1,fontSize:8,padding:"3px 0",borderRadius:3,border:"1px solid #2e7d5230",
                         background:"#2e7d5210",color:"#2e7d52",cursor:"pointer",
