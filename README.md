@@ -2,13 +2,13 @@
 
 # 🇨🇭 Swiss Job Hunter
 
-**Automated job search, scoring, and application tracking for Switzerland**
+**Automated job search, scoring, and application tracking — built for Switzerland, adaptable to any country**
 
 [![CI](https://github.com/Donvink/swiss-job-hunter/actions/workflows/ci.yml/badge.svg)](https://github.com/Donvink/swiss-job-hunter/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 
-[Features](#features) · [Quick Start](#quick-start) · [UI](#ui) · [Multi-Direction](#multi-direction-search) · [Architecture](#architecture)
+[Features](#features) · [Quick Start](#quick-start) · [UI](#ui) · [Multi-Direction](#multi-direction-search) · [Architecture](#architecture) · [Use it anywhere](#use-it-anywhere)
 
 <video src="https://github.com/user-attachments/assets/7931b4e7-3125-4bed-aeba-bbb13644e31e" controls width="100%"></video>
 
@@ -36,6 +36,22 @@ Swiss Job Hunter automates the boring parts:
 A hosted version (no Docker, no API keys) is in the works — expanding to more European job boards.
 
 👉 **[2-min survey — help shape what gets built](https://eurojobhunter.com)**
+
+---
+
+## Use it anywhere
+
+Despite the name, the architecture is **country-agnostic**. The scrapers are the only Switzerland-specific layer — everything else (dedup, LLM scoring, CV tailoring, cover letters, Kanban tracker) works unchanged for any job market.
+
+To adapt it for your country:
+
+1. **Add scrapers** for local boards — see [Adapting to Your Country](#adapting-to-your-country)
+2. **Update the source list** in `ui/src/App.jsx` (`SOURCES` constant)
+3. **Drop in your CV** as `data/cv.txt` (or `data/cv_{direction}.txt` for multiple roles)
+
+That's it. Contributions of new country scrapers are very welcome — open a PR!
+
+> **Germany?** A hosted version targeting DACH + EU job boards is in the works: [EuroJobHunter](https://eurojobhunter.com)
 
 ---
 
@@ -328,20 +344,49 @@ sjh digest
 
 ---
 
-## Adding a New Job Board
+## Adapting to Your Country
 
-1. Create `scrapers/my_board.py` extending `BaseScraper`
-2. Implement `source_name` property and `scrape()` async generator
-3. Register in `scrapers/__init__.py` → `SCRAPER_REGISTRY`
+The scraper layer is the only country-specific part. Here's what to change:
+
+### 1. Add a scraper
+
+Create `scrapers/my_board.py` extending `BaseScraper`:
 
 ```python
 class MyBoardScraper(BaseScraper):
-    source_name = "myboard.ch"
+    source_name = "myboard.de"          # shown in UI and stored in DB
 
     async def scrape(self, keyword, location, max_pages):
-        # yield ScrapedJob instances
-        ...
+        # httpx / Playwright — yield ScrapedJob instances
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                "https://myboard.de/jobs",
+                params={"q": keyword, "l": location},
+            )
+            for item in r.json()["results"]:
+                yield ScrapedJob(
+                    title=item["title"],
+                    company=item["company"],
+                    location=item["location"],
+                    url=item["url"],
+                    description=item.get("snippet", ""),
+                    source=self.source_name,
+                )
 ```
+
+Register it in `scrapers/__init__.py` → `SCRAPER_REGISTRY`.
+
+### 2. Update the UI source list
+
+In `ui/src/App.jsx`, add the new board to the `SOURCES` constant so it appears as a toggle button.
+
+### 3. Test
+
+```bash
+sjh search "software engineer" --location "Berlin" --source myboard.de
+```
+
+That's all. Open a PR to share your scraper with other users in your country!
 
 ---
 
@@ -376,7 +421,7 @@ If you use this code to provide a hosted service, you must release your modifica
 ---
 
 <div align="center">
-<sub>Built for job seekers in Switzerland · Contributions welcome</sub>
+<sub>Started in Switzerland · built for job seekers everywhere · Contributions welcome</sub>
 
 [![Star History Chart](https://api.star-history.com/svg?repos=Donvink/swiss-job-hunter&type=Date)](https://star-history.com/#Donvink/swiss-job-hunter&Date)
 </div>
