@@ -922,6 +922,9 @@ export default function App() {
                   <Btn onClick={()=>runStream("run/check-links",{auto_archive:true,concurrency:10,min_score:threshold/100},"check-links")}
                     loading={loading["check-links"]} label="CHECK DEAD LINKS" icon="🔗"
                     color="#b45309" disabled={!stats.total}/>
+                  <div style={{fontSize:9,color:"#8a9a8a",fontFamily:"monospace",marginTop:-2,paddingLeft:2}}>
+                    uses threshold ≥ {threshold}% (set in FILTER below)
+                  </div>
                   <div style={{height:1,background:"#d4dece",margin:"2px 0"}}/>
                   <div style={{display:"flex",alignItems:"center",gap:5}}>
                     <Btn onClick={()=>runStream("run/purge-archived",{max_score:threshold/100,dry_run:true},"purge-preview")}
@@ -952,7 +955,7 @@ export default function App() {
                       <span style={{fontSize:9,color:"#5a7a68",fontFamily:"monospace",whiteSpace:"nowrap"}}>threshold ≥</span>
                       <input type="number" min={0} max={100} step={5} value={threshold}
                         onChange={e=>{const v=Math.max(0,Math.min(100,parseInt(e.target.value)||0));setThreshold(v);}}
-                        title="score threshold % — used by filter, archive, purge, lookup" style={{...inp,width:52,textAlign:"center",fontSize:10}}/>
+                        title="score threshold % — used by filter, archive, purge, lookup, check-links" style={{...inp,width:52,textAlign:"center",fontSize:10}}/>
                       <span style={{fontSize:9,color:"#5a7a68",fontFamily:"monospace"}}>%</span>
                     </div>
                   </div>
