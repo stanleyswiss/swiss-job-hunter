@@ -382,6 +382,9 @@ async def run_enrich(req: EnrichRequest):
 
         to_enrich = [(jid, sjid) for jid, sjid, dlen in job_data if dlen < 100]
         yield f"Enriching {len(to_enrich)} jobs from {req.source}..."
+        if not to_enrich:
+            yield f"✓ Enriched 0/0 jobs"
+            return
 
         # Generic enrich — works for any scraper that implements fetch_full_description
         scraper_map = {
