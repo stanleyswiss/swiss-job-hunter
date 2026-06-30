@@ -249,67 +249,85 @@ async def run_search(req: SearchRequest):
         total_new = 0
         linkedin_in_sources = "linkedin.com" in req.sources
 
+        async def scrape_source(kw: str, source_name: str, queue: asyncio.Queue) -> int:
+            scraper_cls = SCRAPER_REGISTRY.get(source_name)
+            if not scraper_cls:
+                await queue.put(f"✗ Unknown source: {source_name}")
+                return 0
+            await queue.put(f"→ {source_name}")
+            new_count = 0
+            found_count = 0
+            try:
+                kwargs = {}
+                if source_name == "linkedin.com":
+                    kwargs["time_range"] = req.linkedin_time_range
+                    kwargs["experience_level"] = req.linkedin_experience_level
+                async with scraper_cls(**kwargs) as scraper:
+                    async for scraped in scraper.scrape(kw, req.location, req.pages):
+                        found_count += 1
+                        if found_count % 10 == 0:
+                            await queue.put(f"  ↳ {source_name}: {found_count} fetched so far...")
+                        try:
+                            if is_exact_duplicate(scraped.title, scraped.company, scraped.location):
+                                continue
+                            job, created = get_or_create_job(scraped, direction=req.direction or None)
+                            if created:
+                                try:
+                                    with get_session() as session:
+                                        raw = RawJob(
+                                            canonical_id=job.id,
+                                            source=scraped.source,
+                                            source_job_id=scraped.source_job_id,
+                                            url=scraped.url,
+                                            raw_html=scraped.raw_html,
+                                            raw_json=scraped.raw_json,
+                                        )
+                                        session.add(raw)
+                                except Exception:
+                                    pass
+                                new_count += 1
+                                await queue.put(f"  + [{source_name}] {scraped.title[:50]} @ {scraped.company}")
+                        except Exception as e:
+                            await queue.put(f"  ✗ skipped one job: {str(e)[:80]}")
+                            continue
+            except Exception as e:
+                partial = f", saved {new_count} before failure" if new_count else ""
+                await queue.put(f"✗ {source_name} failed{partial}: {str(e)[:120]}")
+                return new_count
+            if found_count == 0:
+                await queue.put(f"✓ {source_name}: +0 new jobs (scraper returned 0 results)")
+            elif new_count == 0:
+                await queue.put(f"✓ {source_name}: +0 new jobs ({found_count} found, all duplicates)")
+            else:
+                await queue.put(f"✓ {source_name}: +{new_count} new jobs")
+            return new_count
+
         for kw_idx, kw in enumerate(kw_list):
             if kw_idx > 0 and linkedin_in_sources:
                 yield f"⏳ LinkedIn cooldown 5s..."
                 await asyncio.sleep(5)
             yield f"─── keyword: {kw} · {req.location or 'Switzerland (all)'}"
 
-            for source_name in req.sources:
-                scraper_cls = SCRAPER_REGISTRY.get(source_name)
-                if not scraper_cls:
-                    yield f"✗ Unknown source: {source_name}"
-                    continue
+            queue: asyncio.Queue = asyncio.Queue()
+            n_sources = len(req.sources)
+            done_count = [0]
 
-                yield f"→ {source_name}"
-                new_count = 0
-                found_count = 0
+            async def _wrap(src: str) -> int:
                 try:
-                    kwargs = {}
-                    if source_name == "linkedin.com":
-                        kwargs["time_range"] = req.linkedin_time_range
-                        kwargs["experience_level"] = req.linkedin_experience_level
-                    async with scraper_cls(**kwargs) as scraper:
-                        async for scraped in scraper.scrape(kw, req.location, req.pages):
-                            found_count += 1
-                            if found_count % 10 == 0:
-                                yield f"  ↳ {source_name}: {found_count} fetched so far..."
-                            try:
-                                if is_exact_duplicate(scraped.title, scraped.company, scraped.location):
-                                    continue
-                                job, created = get_or_create_job(scraped, direction=req.direction or None)
-                                if created:
-                                    try:
-                                        with get_session() as session:
-                                            raw = RawJob(
-                                                canonical_id=job.id,
-                                                source=scraped.source,
-                                                source_job_id=scraped.source_job_id,
-                                                url=scraped.url,
-                                                raw_html=scraped.raw_html,
-                                                raw_json=scraped.raw_json,
-                                            )
-                                            session.add(raw)
-                                    except Exception:
-                                        pass
-                                    new_count += 1
-                                    yield f"  + [{source_name}] {scraped.title[:50]} @ {scraped.company}"
-                            except Exception as e:
-                                yield f"  ✗ skipped one job: {str(e)[:80]}"
-                                continue
-                except Exception as e:
-                    total_new += new_count
-                    partial = f", saved {new_count} before failure" if new_count else ""
-                    yield f"✗ {source_name} failed{partial}: {str(e)[:120]}"
-                    continue
+                    return await scrape_source(kw, src, queue)
+                finally:
+                    done_count[0] += 1
+                    if done_count[0] == n_sources:
+                        await queue.put(None)
 
-                if found_count == 0:
-                    yield f"✓ {source_name}: +0 new jobs (scraper returned 0 results)"
-                elif new_count == 0:
-                    yield f"✓ {source_name}: +0 new jobs ({found_count} found, all duplicates)"
-                else:
-                    yield f"✓ {source_name}: +{new_count} new jobs"
-                total_new += new_count
+            tasks = [asyncio.create_task(_wrap(src)) for src in req.sources]
+            while True:
+                msg = await queue.get()
+                if msg is None:
+                    break
+                yield msg
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            total_new += sum(r for r in results if isinstance(r, int))
 
         yield f"✓ Done — {total_new} total new jobs"
     return await sse(gen())
@@ -320,6 +338,7 @@ class EnrichRequest(BaseModel):
     source: str = "jobs.ch"
     rescore_llm: bool = False
     direction: Optional[str] = None
+    concurrency: int = 3
 
 
 @app.post("/run/enrich")
@@ -388,33 +407,55 @@ async def run_enrich(req: EnrichRequest):
 
         updated = 0
         enriched_ids = []
+        total_enrich = len(to_enrich)
+        enrich_done = [0]
+        queue: asyncio.Queue = asyncio.Queue()
+        sem = asyncio.Semaphore(req.concurrency)
+
+        async def enrich_one(job_id: int, source_job_id: str, scraper) -> None:
+            nonlocal updated
+            async with sem:
+                try:
+                    result = await scraper.fetch_full_description(source_job_id)
+                    if result and len(result) == 2 and len(result[0]) > 100:
+                        desc, canonical_url = result
+                        with get_session() as session:
+                            job = session.get(Job, job_id)
+                            if job:
+                                job.description = desc
+                                if canonical_url:
+                                    job.url = canonical_url
+                        updated += 1
+                        enriched_ids.append(job_id)
+                        await queue.put(f"✓ job #{job_id} — {len(desc)} chars")
+                    elif result == ():
+                        with get_session() as session:
+                            job = session.get(Job, job_id)
+                            if job:
+                                from db.models import JobStatus
+                                job.status = JobStatus.ARCHIVED
+                        await queue.put(f"– job #{job_id} — expired, auto-archived")
+                    else:
+                        await queue.put(f"– job #{job_id} — no detail available")
+                except Exception as e:
+                    await queue.put(f"✗ job #{job_id} error: {str(e)[:80]}")
+                finally:
+                    enrich_done[0] += 1
+                    if enrich_done[0] == total_enrich:
+                        await queue.put(None)
+
         try:
             async with scraper_cls() as scraper:
-                for job_id, source_job_id in to_enrich:
-                    try:
-                        result = await scraper.fetch_full_description(source_job_id)
-                        if result and len(result) == 2 and len(result[0]) > 100:
-                            desc, canonical_url = result
-                            with get_session() as session:
-                                job = session.get(Job, job_id)
-                                if job:
-                                    job.description = desc
-                                    if canonical_url:
-                                        job.url = canonical_url
-                            updated += 1
-                            enriched_ids.append(job_id)
-                            yield f"✓ job #{job_id} — {len(desc)} chars"
-                        elif result == ():
-                            with get_session() as session:
-                                job = session.get(Job, job_id)
-                                if job:
-                                    from db.models import JobStatus
-                                    job.status = JobStatus.ARCHIVED
-                            yield f"– job #{job_id} — expired, auto-archived"
-                        else:
-                            yield f"– job #{job_id} — no detail available"
-                    except Exception as e:
-                        yield f"✗ job #{job_id} error: {str(e)[:80]}"
+                tasks = [
+                    asyncio.create_task(enrich_one(jid, sjid, scraper))
+                    for jid, sjid in to_enrich
+                ]
+                while True:
+                    msg = await queue.get()
+                    if msg is None:
+                        break
+                    yield msg
+                await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as e:
             yield f"✗ Enrich failed: {str(e)[:120]}"
         yield f"✓ Enriched {updated}/{len(to_enrich)} jobs"
@@ -585,6 +626,121 @@ async def run_analyze(req: AnalyzeRequest):
 class PurgeRequest(BaseModel):
     max_score: float = 0.1
     dry_run: bool = True
+
+
+class CheckLinksRequest(BaseModel):
+    statuses: list[str] = ["new", "analyzed", "shortlisted", "viewed", "considering"]
+    concurrency: int = 10
+    auto_archive: bool = True
+    timeout: float = 8.0
+    min_score: Optional[float] = None
+
+
+@app.post("/run/check-links")
+async def run_check_links(req: CheckLinksRequest):
+    async def gen():
+        import random as _random
+        import httpx as _httpx
+        from db.models import Job, JobStatus
+        from db.session import get_session
+
+        _safe_statuses = {JobStatus.APPLIED, JobStatus.INTERVIEWING, JobStatus.OFFER, JobStatus.REJECTED}
+        _ua = (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        )
+
+        with get_session() as session:
+            valid_statuses = []
+            for s in req.statuses:
+                try:
+                    valid_statuses.append(JobStatus(s))
+                except ValueError:
+                    pass
+            q = (
+                session.query(Job.id, Job.url, Job.title, Job.company)
+                .filter(Job.status.in_(valid_statuses))
+                .filter(Job.url.isnot(None))
+                .filter(Job.url != "")
+            )
+            if req.min_score is not None:
+                q = q.filter(Job.match_score >= req.min_score)
+            job_data = [(j.id, j.url, j.title, j.company) for j in q.order_by(Job.scraped_at.desc()).all()]
+
+        total = len(job_data)
+        if not total:
+            yield "✓ No jobs to check"
+            return
+        yield f"Checking {total} URLs (concurrency={req.concurrency}, auto_archive={'on' if req.auto_archive else 'off'})..."
+
+        dead = 0
+        unreachable = 0
+        done_count = [0]
+        queue: asyncio.Queue = asyncio.Queue()
+        sem = asyncio.Semaphore(req.concurrency)          # global cap
+        domain_sems: dict[str, asyncio.Semaphore] = {}   # per-domain cap (max 2)
+
+        def _get_domain_sem(url: str) -> asyncio.Semaphore:
+            from urllib.parse import urlparse
+            host = urlparse(url).netloc
+            if host not in domain_sems:
+                domain_sems[host] = asyncio.Semaphore(2)
+            return domain_sems[host]
+
+        async def check_one(job_id: int, url: str, title: str, company: str, client: _httpx.AsyncClient) -> None:
+            nonlocal dead, unreachable
+            async with sem:
+                async with _get_domain_sem(url):
+                    await asyncio.sleep(_random.uniform(0.5, 1.5))
+                    try:
+                        try:
+                            resp = await client.head(url)
+                            if resp.status_code == 405:
+                                resp = await client.get(url)
+                        except (_httpx.TimeoutException, _httpx.ConnectError, _httpx.RemoteProtocolError):
+                            resp = await client.get(url)
+                        if resp.status_code in (404, 410):
+                            dead += 1
+                            if req.auto_archive:
+                                with get_session() as session:
+                                    job = session.get(Job, job_id)
+                                    if job and job.status not in _safe_statuses:
+                                        job.status = JobStatus.ARCHIVED
+                            await queue.put(f"✗ #{job_id} {resp.status_code} — {title[:50]} @ {company[:25]}")
+                    except (_httpx.TimeoutException, _httpx.ConnectError, _httpx.RemoteProtocolError,
+                            _httpx.TooManyRedirects):
+                        unreachable += 1
+                    except Exception as e:
+                        unreachable += 1
+                        await queue.put(f"! #{job_id} error: {str(e)[:70]}")
+                    finally:
+                        done_count[0] += 1
+                        n = done_count[0]
+                        if n % 100 == 0 or n == total:
+                            await queue.put(f"  [{n}/{total}] checked — {dead} dead so far")
+                        if n == total:
+                            await queue.put(None)
+
+        async with _httpx.AsyncClient(
+            timeout=req.timeout,
+            follow_redirects=True,
+            headers={"User-Agent": _ua},
+        ) as client:
+            tasks = [
+                asyncio.create_task(check_one(jid, url, title, company, client))
+                for jid, url, title, company in job_data
+            ]
+            while True:
+                msg = await queue.get()
+                if msg is None:
+                    break
+                yield msg
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        action = "auto-archived" if req.auto_archive else "dead (not archived)"
+        alive = total - dead - unreachable
+        yield f"✓ Done — {alive} alive · {dead} {action} · {unreachable} unreachable/timeout"
+    return await sse(gen())
 
 
 @app.post("/run/purge-archived")

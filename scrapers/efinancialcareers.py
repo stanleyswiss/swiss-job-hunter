@@ -123,6 +123,7 @@ class EFinancialCareersScraper(BaseScraper):
             return None
         try:
             from bs4 import BeautifulSoup
+            await self._polite_delay()
             client = await self._get_client()
             resp = await client.get(job_url)
             if resp.status_code in (404, 410):

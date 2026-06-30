@@ -136,6 +136,7 @@ class SwissDevJobsScraper(BaseScraper):
         """Fetch full JD from the job detail page using Playwright (SPA)."""
         url = f"{_BASE_URL}/jobs/{source_job_id}"
         try:
+            await self._polite_delay()
             async with async_playwright() as pw:
                 browser = await pw.chromium.launch(headless=settings.playwright_headless)
                 context = await browser.new_context(

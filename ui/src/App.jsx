@@ -919,6 +919,9 @@ export default function App() {
                   <Btn onClick={()=>runStream("run/company-lookup",{min_score:threshold/100},"company-lookup")}
                     loading={loading["company-lookup"]} label="LOOKUP COMPANIES" icon="🏢"
                     color="#2e7d52" disabled={!stats.total}/>
+                  <Btn onClick={()=>runStream("run/check-links",{auto_archive:true,concurrency:10,min_score:threshold/100},"check-links")}
+                    loading={loading["check-links"]} label="CHECK DEAD LINKS" icon="🔗"
+                    color="#b45309" disabled={!stats.total}/>
                   <div style={{height:1,background:"#d4dece",margin:"2px 0"}}/>
                   <div style={{display:"flex",alignItems:"center",gap:5}}>
                     <Btn onClick={()=>runStream("run/purge-archived",{max_score:threshold/100,dry_run:true},"purge-preview")}
