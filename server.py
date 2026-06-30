@@ -246,6 +246,9 @@ async def run_search(req: SearchRequest):
         init_db()
 
         kw_list = req.keywords if req.keywords else [req.keyword]
+        if not req.sources:
+            yield "✗ No sources selected"
+            return
         total_new = 0
         linkedin_in_sources = "linkedin.com" in req.sources
 
